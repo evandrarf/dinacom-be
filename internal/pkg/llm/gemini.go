@@ -85,7 +85,7 @@ func (c *GeminiClient) GenerateChatResponse(ctx context.Context, messages []open
 			Messages:    messages,
 			Temperature: 0.7,
 			TopP:        0.95,
-			MaxTokens:   2048,
+			MaxTokens:   2048 * 4,
 			// No ResponseFormat - allow plain text response
 		},
 	)
