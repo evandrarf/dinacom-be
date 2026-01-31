@@ -20,7 +20,7 @@ import (
 )
 
 type DyslexiaQuestionUsecase interface {
-	Generate(ctx context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, pattern string, useAI bool) ([]entity.GeneratedQuestion, error)
+	Generate(ctx context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, patterns []string, useAI bool, sessionID string) ([]entity.GeneratedQuestion, error)
 	SubmitAnswer(ctx context.Context, req entity.SubmitAnswerRequest) (*entity.SubmitAnswerResponse, error)
 	GetSessionAnswers(ctx context.Context, sessionID string) ([]entity.UserAnswerLog, error)
 	GenerateSessionReport(ctx context.Context, sessionID string) (*entity.SessionReport, error)
@@ -51,9 +51,9 @@ func NewDyslexiaQuestionUsecase(cfg DyslexiaQuestionConfig) DyslexiaQuestionUsec
 	}
 }
 
-func (u *dyslexiaQuestionUsecase) Generate(ctx context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, pattern string, useAI bool) ([]entity.GeneratedQuestion, error) {
+func (u *dyslexiaQuestionUsecase) Generate(ctx context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, patterns []string, useAI bool, sessionID string) ([]entity.GeneratedQuestion, error) {
 	startTime := time.Now()
-	fmt.Printf("[PERF] Generate started for difficulty=%s count=%d pattern=%s use_ai=%v\n", difficulty, count, pattern, useAI)
+	fmt.Printf("[PERF] Generate started for difficulty=%s count=%d patterns=%v use_ai=%v session_id=%s\n", difficulty, count, patterns, useAI, sessionID)
 
 	if difficulty == "" {
 		difficulty = entity.DifficultyEasy
@@ -65,29 +65,56 @@ func (u *dyslexiaQuestionUsecase) Generate(ctx context.Context, difficulty entit
 		count = 10
 	}
 
-	// Define common letter pairs for dyslexia practice
-	letterPairs := []string{"b-d", "p-q", "m-w", "n-u", "m-n"}
-
-	// If pattern is specified, validate and use only that pattern
-	if pattern != "" {
-		pattern = strings.ToLower(strings.TrimSpace(pattern))
-		validPattern := false
-		for _, lp := range letterPairs {
-			if lp == pattern {
-				validPattern = true
-				break
+	// Get list of question IDs already used in this session (to avoid duplicates)
+	excludedQuestionIDs := []string{}
+	if sessionID != "" {
+		userAnswers, err := u.cfg.Repository.FindUserAnswersBySessionID(u.cfg.DB, sessionID)
+		if err == nil {
+			for _, answer := range userAnswers {
+				excludedQuestionIDs = append(excludedQuestionIDs, answer.QuestionID)
 			}
+			fmt.Printf("[SESSION] Found %d questions already used in session %s\n", len(excludedQuestionIDs), sessionID)
 		}
-		if !validPattern {
-			return nil, fmt.Errorf("invalid pattern: %s (allowed: b-d, p-q, m-w, n-u, m-n)", pattern)
+	}
+
+	// Define common letter pairs for dyslexia practice
+	allLetterPairs := []string{"b-d", "p-q", "m-w", "n-u", "m-n"}
+	letterPairs := allLetterPairs // Default: use all
+
+	// If patterns are specified, validate and use only those patterns
+	if len(patterns) > 0 {
+		validatedPatterns := []string{}
+		for _, pattern := range patterns {
+			pattern = strings.ToLower(strings.TrimSpace(pattern))
+			if pattern == "" {
+				continue
+			}
+
+			// Validate pattern
+			validPattern := false
+			for _, lp := range allLetterPairs {
+				if lp == pattern {
+					validPattern = true
+					break
+				}
+			}
+
+			if !validPattern {
+				return nil, fmt.Errorf("invalid pattern: %s (allowed: b-d, p-q, m-w, n-u, m-n)", pattern)
+			}
+
+			validatedPatterns = append(validatedPatterns, pattern)
 		}
-		letterPairs = []string{pattern} // Use only the specified pattern
+
+		if len(validatedPatterns) > 0 {
+			letterPairs = validatedPatterns // Use only the specified patterns
+		}
 	}
 
 	// If use_ai=false, retrieve from DB cache
 	if !useAI {
 		fmt.Printf("[PERF] Using DB cache (use_ai=false)\n")
-		return u.generateFromDBCache(ctx, difficulty, count, includeAnswer, pattern)
+		return u.generateFromDBCache(ctx, difficulty, count, includeAnswer, letterPairs, excludedQuestionIDs)
 	}
 
 	// Check if AI prompt is disabled via env
@@ -114,7 +141,7 @@ func (u *dyslexiaQuestionUsecase) Generate(ctx context.Context, difficulty entit
 
 			if disableAI {
 				// Skip AI, use simple fallback
-				q = createFallbackQuestion(difficulty, letterPair, true)
+				q = u.createFallbackQuestionWithShuffle(difficulty, letterPair, true)
 			} else {
 				// Generate from AI
 				aiStart := time.Now()
@@ -123,7 +150,7 @@ func (u *dyslexiaQuestionUsecase) Generate(ctx context.Context, difficulty entit
 
 				if err != nil {
 					fmt.Printf("Question %d: AI generate error: %v, using fallback\n", index+1, err)
-					q = createFallbackQuestion(difficulty, letterPair, true)
+					q = u.createFallbackQuestionWithShuffle(difficulty, letterPair, true)
 				} else {
 					// Save asynchronously (non-blocking)
 					go func(question entity.GeneratedQuestion, pair string) {
@@ -145,6 +172,63 @@ func (u *dyslexiaQuestionUsecase) Generate(ctx context.Context, difficulty entit
 		r := <-resultChan
 		results[r.index] = r.question
 	}
+
+	// Deduplicate questions within the same response (ensure no duplicates in current batch)
+	seenIDs := make(map[string]bool)
+	uniqueResults := []entity.GeneratedQuestion{}
+
+	// Add excluded IDs to seen map
+	for _, id := range excludedQuestionIDs {
+		seenIDs[id] = true
+	}
+
+	for _, q := range results {
+		if !seenIDs[q.ID] {
+			seenIDs[q.ID] = true
+			uniqueResults = append(uniqueResults, q)
+		} else {
+			fmt.Printf("[DUPLICATE] Filtered out duplicate question in same batch: %s\n", q.ID)
+		}
+	}
+
+	// If we filtered out questions and have less than requested, try to generate more
+	if len(uniqueResults) < count {
+		shortage := count - len(uniqueResults)
+		fmt.Printf("[DUPLICATE] Need %d more questions due to duplicates, generating...\n", shortage)
+
+		// Generate additional questions to fill the shortage
+		for i := 0; i < shortage && i < 5; i++ { // Max 5 retries
+			letterPair := letterPairs[u.rnd.Intn(len(letterPairs))]
+			var q entity.GeneratedQuestion
+
+			if disableAI {
+				q = u.createFallbackQuestionWithShuffle(difficulty, letterPair, true)
+			} else {
+				var err error
+				q, err = u.generateFromAI(ctx, difficulty, letterPair, true)
+				if err != nil {
+					q = u.createFallbackQuestionWithShuffle(difficulty, letterPair, true)
+				} else {
+					go func(question entity.GeneratedQuestion, pair string) {
+						_ = u.saveGeneratedToDB(ctx, question, pair)
+					}(q, letterPair)
+				}
+			}
+
+			// Check if this new question is also unique
+			if !seenIDs[q.ID] {
+				seenIDs[q.ID] = true
+				uniqueResults = append(uniqueResults, q)
+				fmt.Printf("[DUPLICATE] Added replacement question: %s\n", q.ID)
+			}
+
+			if len(uniqueResults) >= count {
+				break
+			}
+		}
+	}
+
+	results = uniqueResults
 
 	// Remove answer from response if not requested by user
 	if !includeAnswer {
@@ -221,28 +305,41 @@ func (u *dyslexiaQuestionUsecase) saveGeneratedToDB(_ context.Context, q entity.
 }
 
 // generateFromDBCache retrieves previously generated questions from database
-func (u *dyslexiaQuestionUsecase) generateFromDBCache(_ context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, pattern string) ([]entity.GeneratedQuestion, error) {
+func (u *dyslexiaQuestionUsecase) generateFromDBCache(_ context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, patterns []string, excludeIDs []string) ([]entity.GeneratedQuestion, error) {
 	startTime := time.Now()
 
 	// Build filters for repository query
 	filters := []string{}
-	if pattern != "" {
-		filters = append(filters, fmt.Sprintf("target_letter_pair = '%s'", pattern))
+	if len(patterns) > 0 {
+		// Build IN clause for multiple patterns
+		quotedPatterns := make([]string, len(patterns))
+		for i, p := range patterns {
+			quotedPatterns[i] = fmt.Sprintf("'%s'", p)
+		}
+		filters = append(filters, fmt.Sprintf("target_letter_pair IN (%s)", strings.Join(quotedPatterns, ",")))
 	}
 
-	// Get random questions from DB matching criteria
-	dbQuestions, err := u.cfg.Repository.FindRandomGeneratedByDifficulty(u.cfg.DB, string(difficulty), count, filters)
+	// Get random questions from DB matching criteria, excluding already used question IDs
+	dbQuestions, err := u.cfg.Repository.FindRandomGeneratedByDifficulty(u.cfg.DB, string(difficulty), count, excludeIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve questions from cache: %w", err)
 	}
 
 	if len(dbQuestions) == 0 {
-		return nil, fmt.Errorf("no cached questions found for difficulty=%s pattern=%s", difficulty, pattern)
+		return nil, fmt.Errorf("no cached questions found for difficulty=%s patterns=%v (excluded %d questions)", difficulty, patterns, len(excludeIDs))
 	}
 
 	// Convert DB questions to response format
 	results := make([]entity.GeneratedQuestion, 0, len(dbQuestions))
+	seenIDs := make(map[string]bool)
+
 	for _, dbQ := range dbQuestions {
+		// Check for duplicate question IDs (safety check)
+		if seenIDs[dbQ.QuestionID] {
+			fmt.Printf("[DUPLICATE] Skipped duplicate from DB: %s\n", dbQ.QuestionID)
+			continue
+		}
+
 		// Unmarshal options
 		var options []string
 		if err := json.Unmarshal([]byte(dbQ.Options), &options); err != nil {
@@ -250,18 +347,22 @@ func (u *dyslexiaQuestionUsecase) generateFromDBCache(_ context.Context, difficu
 			continue
 		}
 
+		// Shuffle options for randomness
+		shuffledOptions := u.shuffleOptions(options)
+
 		q := entity.GeneratedQuestion{
 			ID:               dbQ.QuestionID,
 			Difficulty:       entity.Difficulty(dbQ.Difficulty),
 			QuestionText:     dbQ.QuestionText,
 			TargetLetterPair: dbQ.TargetLetterPair,
 			TargetLetter:     dbQ.TargetLetter,
-			Options:          options,
+			Options:          shuffledOptions,
 		}
 		if includeAnswer {
 			q.Answer = dbQ.CorrectAnswer
 		}
 
+		seenIDs[dbQ.QuestionID] = true
 		results = append(results, q)
 
 		// Increment usage count asynchronously
@@ -277,6 +378,42 @@ func (u *dyslexiaQuestionUsecase) generateFromDBCache(_ context.Context, difficu
 }
 
 // Simple fallback when AI is disabled or fails
+func (u *dyslexiaQuestionUsecase) createFallbackQuestionWithShuffle(difficulty entity.Difficulty, letterPair string, includeAnswer bool) entity.GeneratedQuestion {
+	// Hardcoded fallback examples per letter pair (natural lowercase for common nouns)
+	fallbackWords := map[string][]string{
+		"b-d": {"bola", "dola", "bela", "dela"},
+		"p-q": {"pagi", "qagi", "patu", "qatu"},
+		"m-w": {"maju", "waju", "mata", "wata"},
+		"n-u": {"nasi", "uasi", "nama", "uama"},
+		"m-n": {"makan", "nakan", "main", "nain"},
+	}
+
+	words, ok := fallbackWords[letterPair]
+	if !ok {
+		words = []string{"bola", "dola", "bela", "dela"} // Default
+	}
+
+	correctAnswer := words[0]
+	id := generateQuestionID(correctAnswer, difficulty)
+
+	// Shuffle options
+	shuffledOptions := u.shuffleOptions(words)
+
+	q := entity.GeneratedQuestion{
+		ID:               id,
+		Difficulty:       difficulty,
+		QuestionText:     "Dengarkan kata berikut: ",
+		TargetLetterPair: letterPair,
+		TargetLetter:     strings.Split(letterPair, "-")[0],
+		Options:          shuffledOptions,
+	}
+	if includeAnswer {
+		q.Answer = correctAnswer
+	}
+	return q
+}
+
+// Legacy createFallbackQuestion for backward compatibility
 func createFallbackQuestion(difficulty entity.Difficulty, letterPair string, includeAnswer bool) entity.GeneratedQuestion {
 	// Hardcoded fallback examples per letter pair (natural lowercase for common nouns)
 	fallbackWords := map[string][]string{
@@ -485,6 +622,9 @@ func (u *dyslexiaQuestionUsecase) generateFromAI(ctx context.Context, difficulty
 		return entity.GeneratedQuestion{}, fmt.Errorf("not enough unique options after deduplication")
 	}
 
+	// Shuffle options for randomness
+	shuffledOptions := u.shuffleOptions(uniqueOptions)
+
 	id := generateQuestionID(parsed.CorrectAnswer, difficulty)
 	q := entity.GeneratedQuestion{
 		ID:               id,
@@ -492,7 +632,7 @@ func (u *dyslexiaQuestionUsecase) generateFromAI(ctx context.Context, difficulty
 		QuestionText:     "Dengarkan kata berikut: ",
 		TargetLetterPair: letterPair,
 		TargetLetter:     strings.Split(letterPair, "-")[0], // First letter of pair
-		Options:          uniqueOptions,
+		Options:          shuffledOptions,
 	}
 	if includeAnswer {
 		q.Answer = parsed.CorrectAnswer
@@ -509,6 +649,20 @@ func generateQuestionID(word string, difficulty entity.Difficulty) string {
 	uniqueness := fmt.Sprintf("%d-%x", timestamp, randomBytes)
 	sum := sha256.Sum256([]byte(word + "|" + string(difficulty) + "|" + uniqueness))
 	return "q-" + hex.EncodeToString(sum[:8])
+}
+
+// shuffleOptions randomly shuffles the options array
+func (u *dyslexiaQuestionUsecase) shuffleOptions(options []string) []string {
+	shuffled := make([]string, len(options))
+	copy(shuffled, options)
+
+	// Fisher-Yates shuffle
+	for i := len(shuffled) - 1; i > 0; i-- {
+		j := u.rnd.Intn(i + 1)
+		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+	}
+
+	return shuffled
 }
 
 const defaultPromptTemplate = `You are generating audio-based listening questions for Indonesian dyslexic children (TK-SD).
@@ -775,9 +929,38 @@ func (u *dyslexiaQuestionUsecase) generateAIAnalysis(ctx context.Context, answer
 		return "AI analysis not available", "Practice more to improve", "good"
 	}
 
+	// Get user ID from first answer
+	var userID string
+	if len(answers) > 0 {
+		userID = answers[0].UserID
+	}
+
+	// Get historical sessions for progress tracking
+	var historyContext string
+	if userID != "" {
+		historicalSessions, err := u.cfg.Repository.FindAnalysisCacheByUserID(u.cfg.DB, userID, 5) // Last 5 sessions
+		if err == nil && len(historicalSessions) > 0 {
+			historyContext = "\n\n**Previous Session History (showing improvement/decline):**\n"
+			for i, session := range historicalSessions {
+				historyContext += fmt.Sprintf("%d. Session %s: %s accuracy, %d/%d correct, Overall: %s (Date: %s)\n",
+					i+1,
+					session.SessionID[:12]+"...",
+					session.AccuracyRate,
+					session.CorrectAnswers,
+					session.TotalQuestions,
+					session.OverallValue,
+					session.CreatedAt.Format("2006-01-02"))
+			}
+			historyContext += "\nNote: Compare CURRENT session with PREVIOUS sessions to identify improvement trends or areas needing more focus.\n"
+		} else {
+			historyContext = "\n\n**This is the user's FIRST session** - no previous data for comparison.\n"
+		}
+	}
+
 	// Build analysis prompt
 	prompt := fmt.Sprintf(`Analyze this dyslexia learning session data for an Indonesian child (TK-SD level):
 
+**CURRENT Session:**
 Total Questions: %d
 Accuracy Rate: %s
 Wrong Answers: %d
@@ -790,13 +973,19 @@ Error Patterns by Letter Pairs:
 			pattern.LetterPair, pattern.ErrorCount, pattern.TotalCount, pattern.ErrorRate)
 	}
 
+	// Add historical context
+	prompt += historyContext
+
 	prompt += `
 Task:
 1. Provide a brief, caring analysis in Indonesian about the child's learning patterns
-2. Identify which letter pairs need most attention
-3. Give 2-3 specific, actionable recommendations for improvement
-4. Determine overall performance level by considering MULTIPLE factors:
+2. **IF there's previous session data**: Compare current performance with previous sessions and mention if there's improvement, decline, or consistency
+3. **IF this is first session**: Focus on current performance and set baseline expectations
+4. Identify which letter pairs need most attention
+5. Give 2-3 specific, actionable recommendations for improvement
+6. Determine overall performance level by considering MULTIPLE factors:
    - Accuracy rate (primary factor)
+   - **Progress trend** (improved/declined compared to previous sessions)
    - Error patterns and consistency (which letter pairs are most problematic)
    - Error rate per letter pair (high error rate on specific pairs indicates focused difficulty)
    - Number of total questions attempted (shows engagement)
@@ -875,6 +1064,10 @@ func (u *dyslexiaQuestionUsecase) ChatWithBot(ctx context.Context, sessionID str
 		}
 	}
 
+	// Get error patterns for training recommendations
+	answers, _ := u.cfg.Repository.FindUserAnswersBySessionID(u.cfg.DB, sessionID)
+	errorPatterns := u.analyzeErrorPatterns(answers)
+
 	// 2. Build system context from cached analysis
 	systemContext := fmt.Sprintf(`Kamu adalah asisten pembelajaran yang membantu anak-anak dengan disleksia dalam bahasa Indonesia.
 
@@ -946,7 +1139,11 @@ Tugas kamu:
 		return nil, fmt.Errorf("failed to generate chatbot response: %w", err)
 	}
 
-	// 6. Save both user message and bot response to database
+	// 6. Determine if this response should include training recommendation
+	// Add training recommendation randomly in about 30% of responses, or when specifically asked
+	trainingRec := u.shouldIncludeTrainingRecommendation(userMessage, chatHistory, errorPatterns)
+
+	// 7. Save both user message and bot response to database
 	// Save user message
 	userMsg := &internalEntity.ChatMessage{
 		SessionID: sessionID,
@@ -957,19 +1154,26 @@ Tugas kamu:
 		// Ignore save error, continue with response
 	}
 
-	// Save bot response
+	// Save bot response with training recommendation
+	trainingRecStr := ""
+	if trainingRec != nil && len(trainingRec.LetterPairs) > 0 {
+		trainingRecStr = strings.Join(trainingRec.LetterPairs, ",")
+	}
+
 	botMsg := &internalEntity.ChatMessage{
-		SessionID: sessionID,
-		Role:      "assistant",
-		Message:   botResponse,
+		SessionID:              sessionID,
+		Role:                   "assistant",
+		Message:                botResponse,
+		TrainingRecommendation: trainingRecStr,
 	}
 	if err := u.cfg.Repository.CreateChatMessage(u.cfg.DB, botMsg); err != nil {
 		// Ignore save error, continue with response
 	}
 
 	return &entity.ChatResponse{
-		Response:  botResponse,
-		SessionID: sessionID,
+		Response:               botResponse,
+		SessionID:              sessionID,
+		TrainingRecommendation: trainingRec,
 	}, nil
 }
 
@@ -983,11 +1187,148 @@ func (u *dyslexiaQuestionUsecase) GetChatHistory(ctx context.Context, sessionID 
 	history := make([]entity.ChatHistoryItem, 0, len(messages))
 	for _, msg := range messages {
 		history = append(history, entity.ChatHistoryItem{
-			Role:      msg.Role,
-			Message:   msg.Message,
-			CreatedAt: msg.CreatedAt.Format(time.RFC3339),
+			Role:                   msg.Role,
+			Message:                msg.Message,
+			TrainingRecommendation: msg.TrainingRecommendation,
+			CreatedAt:              msg.CreatedAt.Format(time.RFC3339),
 		})
 	}
 
 	return history, nil
+}
+
+// analyzeErrorPatterns analyzes user answers to find problematic letter pairs
+func (u *dyslexiaQuestionUsecase) analyzeErrorPatterns(answers []internalEntity.UserAnswer) map[string]struct {
+	errors int
+	total  int
+} {
+	letterPairErrors := make(map[string]struct {
+		errors int
+		total  int
+	})
+
+	for _, answer := range answers {
+		// Get letter pair info
+		generatedQ, _ := u.cfg.Repository.FindGeneratedByQuestionID(u.cfg.DB, answer.QuestionID)
+		if generatedQ != nil && generatedQ.TargetLetterPair != "" {
+			pair := generatedQ.TargetLetterPair
+			stats := letterPairErrors[pair]
+			stats.total++
+			if !answer.IsCorrect {
+				stats.errors++
+			}
+			letterPairErrors[pair] = stats
+		}
+	}
+
+	return letterPairErrors
+}
+
+// shouldIncludeTrainingRecommendation determines if training recommendation should be included
+func (u *dyslexiaQuestionUsecase) shouldIncludeTrainingRecommendation(
+	userMessage string,
+	chatHistory []internalEntity.ChatMessage,
+	errorPatterns map[string]struct {
+		errors int
+		total  int
+	},
+) *entity.TrainingRecommendation {
+	// No error patterns to recommend
+	if len(errorPatterns) == 0 {
+		return nil
+	}
+
+	// Check if user is asking about training, practice, or improvement
+	lowerMsg := strings.ToLower(userMessage)
+	keywords := []string{"latihan", "belajar", "練習", "meningkatkan", "perbaiki", "praktek", "training", "cara"}
+	explicitlyAsked := false
+	for _, keyword := range keywords {
+		if strings.Contains(lowerMsg, keyword) {
+			explicitlyAsked = true
+			break
+		}
+	}
+
+	// Count how many recent messages already included recommendations (avoid spamming)
+	recentRecommendations := 0
+	maxHistoryCheck := 6
+	if len(chatHistory) < maxHistoryCheck {
+		maxHistoryCheck = len(chatHistory)
+	}
+	for i := len(chatHistory) - maxHistoryCheck; i < len(chatHistory); i++ {
+		if chatHistory[i].Role == "assistant" && strings.Contains(strings.ToLower(chatHistory[i].Message), "latihan") {
+			recentRecommendations++
+		}
+	}
+
+	// Decision logic:
+	// 1. If explicitly asked, always provide recommendation
+	// 2. If no recent recommendations (last 3 messages), 30% chance
+	// 3. If already gave recommendation recently, skip unless explicitly asked
+	shouldInclude := false
+	if explicitlyAsked {
+		shouldInclude = true
+	} else if recentRecommendations == 0 {
+		// 30% random chance
+		shouldInclude = u.rnd.Float32() < 0.3
+	}
+
+	if !shouldInclude {
+		return nil
+	}
+
+	// Find letter pairs with highest error rates (>= 40% error rate or at least 2 errors)
+	type pairError struct {
+		pair      string
+		errorRate float64
+		errors    int
+	}
+	var problematicPairs []pairError
+
+	for pair, stats := range errorPatterns {
+		if stats.total == 0 {
+			continue
+		}
+		errorRate := float64(stats.errors) / float64(stats.total)
+		// Include if error rate >= 40% OR has at least 2 errors
+		if errorRate >= 0.4 || stats.errors >= 2 {
+			problematicPairs = append(problematicPairs, pairError{
+				pair:      pair,
+				errorRate: errorRate,
+				errors:    stats.errors,
+			})
+		}
+	}
+
+	// Sort by error count (descending)
+	for i := 0; i < len(problematicPairs); i++ {
+		for j := i + 1; j < len(problematicPairs); j++ {
+			if problematicPairs[j].errors > problematicPairs[i].errors {
+				problematicPairs[i], problematicPairs[j] = problematicPairs[j], problematicPairs[i]
+			}
+		}
+	}
+
+	// Take top 2-3 letter pairs
+	maxPairs := 3
+	if len(problematicPairs) > maxPairs {
+		problematicPairs = problematicPairs[:maxPairs]
+	}
+
+	if len(problematicPairs) == 0 {
+		return nil
+	}
+
+	// Build recommendation
+	letterPairs := make([]string, 0, len(problematicPairs))
+	for _, pe := range problematicPairs {
+		letterPairs = append(letterPairs, pe.pair)
+	}
+
+	reason := fmt.Sprintf("Berdasarkan hasil latihan, huruf-huruf ini masih sering tertukar. Fokus latihan pada pasangan huruf ini akan sangat membantu meningkatkan kemampuan membaca.")
+
+	return &entity.TrainingRecommendation{
+		LetterPairs: letterPairs,
+		Reason:      reason,
+	}
 }

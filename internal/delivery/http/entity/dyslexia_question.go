@@ -95,13 +95,21 @@ type ChatRequest struct {
 
 // Chat response
 type ChatResponse struct {
-	Response  string `json:"response"`
-	SessionID string `json:"session_id"`
+	Response               string                  `json:"response"`
+	SessionID              string                  `json:"session_id"`
+	TrainingRecommendation *TrainingRecommendation `json:"training_recommendation,omitempty"`
+}
+
+// Training recommendation for specific letter pairs
+type TrainingRecommendation struct {
+	LetterPairs []string `json:"letter_pairs"`
+	Reason      string   `json:"reason"`
 }
 
 // Chat history item
 type ChatHistoryItem struct {
-	Role      string `json:"role"`
-	Message   string `json:"message"`
-	CreatedAt string `json:"created_at"`
+	Role                   string `json:"role"`
+	Message                string `json:"message"`
+	TrainingRecommendation string `json:"training_recommendation,omitempty"` // comma-separated: "b-d,m-w"
+	CreatedAt              string `json:"created_at"`
 }

@@ -91,13 +91,14 @@ func (SessionAnalysisCache) TableName() string {
 
 // ChatMessage - History chat per session
 type ChatMessage struct {
-	ID        uint           `gorm:"primarykey" json:"id"`
-	SessionID string         `gorm:"size:100;not null;index" json:"session_id"` // session test
-	Role      string         `gorm:"size:20;not null" json:"role"`              // user, assistant, system
-	Message   string         `gorm:"type:text;not null" json:"message"`
-	CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	ID                     uint           `gorm:"primarykey" json:"id"`
+	SessionID              string         `gorm:"size:100;not null;index" json:"session_id"` // session test
+	Role                   string         `gorm:"size:20;not null" json:"role"`              // user, assistant, system
+	Message                string         `gorm:"type:text;not null" json:"message"`
+	TrainingRecommendation string         `gorm:"type:text" json:"training_recommendation"` // comma-separated letter pairs: "b-d,m-w"
+	CreatedAt              time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt              time.Time      `json:"updated_at"`
+	DeletedAt              gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
 }
 
 func (ChatMessage) TableName() string {

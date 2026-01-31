@@ -28,6 +28,7 @@ type (
 		// Session analysis cache operations
 		CreateOrUpdateAnalysisCache(db *gorm.DB, cache *entity.SessionAnalysisCache) error
 		FindAnalysisCacheBySessionID(db *gorm.DB, sessionID string) (*entity.SessionAnalysisCache, error)
+		FindAnalysisCacheByUserID(db *gorm.DB, userID string, limit int) ([]entity.SessionAnalysisCache, error)
 
 		// Chat message operations
 		CreateChatMessage(db *gorm.DB, message *entity.ChatMessage) error
@@ -180,6 +181,34 @@ func (r *dyslexiaQuestionRepository) FindAnalysisCacheBySessionID(db *gorm.DB, s
 		return nil, err
 	}
 	return &cache, nil
+}
+
+func (r *dyslexiaQuestionRepository) FindAnalysisCacheByUserID(db *gorm.DB, userID string, limit int) ([]entity.SessionAnalysisCache, error) {
+	if db == nil {
+		db = r.db
+	}
+	var caches []entity.SessionAnalysisCache
+
+	// Join with user_answers to get sessions for this user
+	// Get distinct session_ids first
+	var sessionIDs []string
+	err := db.Model(&entity.UserAnswer{}).
+		Where("user_id = ?", userID).
+		Distinct("session_id").
+		Pluck("session_id", &sessionIDs).Error
+
+	if err != nil || len(sessionIDs) == 0 {
+		return []entity.SessionAnalysisCache{}, err
+	}
+
+	// Get analysis cache for those sessions
+	query := db.Where("session_id IN ?", sessionIDs).Order("created_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	err = query.Find(&caches).Error
+	return caches, err
 }
 
 // Chat message operations

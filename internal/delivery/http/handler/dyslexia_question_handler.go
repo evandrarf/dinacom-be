@@ -38,7 +38,7 @@ func NewDyslexiaQuestionHandler(validator *validate.Validator, logger *logrus.Lo
 	}
 }
 
-// GET /questions/generate?difficulty=easy|medium|hard&count=1&includeAnswer=false&pattern=b-d&use_ai=true
+// GET /questions/generate?difficulty=easy|medium|hard&count=1&includeAnswer=false&pattern=b-d&use_ai=true&session_id=xxx
 func (h *dyslexiaQuestionHandler) Generate(ctx *fiber.Ctx) error {
 	_ = h.validator
 
@@ -59,8 +59,22 @@ func (h *dyslexiaQuestionHandler) Generate(ctx *fiber.Ctx) error {
 		useAI = (v == "1" || strings.EqualFold(v, "true"))
 	}
 
-	// Pattern filter (optional) - specific letter pair to generate
-	pattern := strings.TrimSpace(ctx.Query("pattern"))
+	// Session ID (optional) - to avoid duplicate questions in same session
+	sessionID := strings.TrimSpace(ctx.Query("session_id"))
+
+	// Pattern filter (optional) - specific letter pairs to generate (comma-separated)
+	// Example: pattern=p-q,m-w,n-u
+	patternStr := strings.TrimSpace(ctx.Query("pattern"))
+	var patterns []string
+	if patternStr != "" {
+		// Split by comma and trim spaces
+		for _, p := range strings.Split(patternStr, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				patterns = append(patterns, p)
+			}
+		}
+	}
 
 	difficulty := entity.DifficultyEasy
 	if d := strings.TrimSpace(ctx.Query("difficulty")); d != "" {
@@ -73,7 +87,7 @@ func (h *dyslexiaQuestionHandler) Generate(ctx *fiber.Ctx) error {
 		}
 	}
 
-	questions, err := h.usecase.Generate(ctx.UserContext(), difficulty, count, includeAnswer, pattern, useAI)
+	questions, err := h.usecase.Generate(ctx.UserContext(), difficulty, count, includeAnswer, patterns, useAI, sessionID)
 	if err != nil {
 		return response.NewFailed(domain.DYSLEXIA_QUESTION_GENERATE_FAILED, fiber.NewError(fiber.StatusBadRequest, err.Error()), h.logger).Send(ctx)
 	}
