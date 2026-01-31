@@ -84,8 +84,7 @@ type SessionReport struct {
 	OverallValue    string         `json:"overall_value"`
 	ErrorPatterns   []ErrorPattern `json:"error_patterns"`
 	DifficultyStats map[string]int `json:"difficulty_stats"`
-	AIAnalysys      string         `json:"ai_analysis"`
-	Recommendations string         `json:"recommendations"`
+	AIAnalysys      string         `json:"ai_analysis"` // Already includes recommendations
 }
 
 // Chat request

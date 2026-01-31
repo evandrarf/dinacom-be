@@ -848,7 +848,7 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 
 	// Generate Gemini analysis (with 3x retry built-in)
 	fmt.Printf("[SESSION REPORT] Generating AI analysis for session %s...\n", sessionID)
-	geminiAnalysis, recommendations, overallValue := u.generateAIAnalysis(ctx, answers, errorPatterns, accuracyRate)
+	geminiAnalysis, _, overallValue := u.generateAIAnalysis(ctx, answers, errorPatterns, accuracyRate)
 	fmt.Printf("[SESSION REPORT] AI analysis generated successfully\n")
 
 	report := &entity.SessionReport{
@@ -860,8 +860,7 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 		OverallValue:    overallValue,
 		ErrorPatterns:   errorPatterns,
 		DifficultyStats: difficultyStats,
-		AIAnalysys:      geminiAnalysis,
-		Recommendations: recommendations,
+		AIAnalysys:      geminiAnalysis, // Already includes recommendations
 	}
 
 	// Save analysis to cache for chatbot
@@ -871,7 +870,7 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 
 	// Save AI analysis as first message in chat history
 	fmt.Printf("[SESSION REPORT] Saving feedback to chat history...\n")
-	if err := u.saveFeedbackToChat(ctx, sessionID, geminiAnalysis, recommendations); err != nil {
+	if err := u.saveFeedbackToChat(ctx, sessionID, geminiAnalysis, ""); err != nil {
 		fmt.Printf("Warning: failed to save feedback to chat: %v\n", err)
 	} else {
 		fmt.Printf("[SESSION REPORT] Feedback saved to chat successfully\n")
@@ -899,8 +898,8 @@ func (u *dyslexiaQuestionUsecase) saveAnalysisCache(_ context.Context, report *e
 		WrongAnswers:    report.WrongAnswers,
 		AccuracyRate:    report.AccuracyRate,
 		OverallValue:    report.OverallValue,
-		AIAnalysis:      report.AIAnalysys,
-		Recommendations: report.Recommendations,
+		AIAnalysis:      report.AIAnalysys, // Already includes recommendations
+		Recommendations: "",                // Deprecated, kept empty for backward compatibility
 		ErrorPatterns:   string(errorPatternsJSON),
 		DifficultyStats: string(difficultyStatsJSON),
 	}
@@ -908,7 +907,7 @@ func (u *dyslexiaQuestionUsecase) saveAnalysisCache(_ context.Context, report *e
 	return u.cfg.Repository.CreateOrUpdateAnalysisCache(u.cfg.DB, cache)
 }
 
-func (u *dyslexiaQuestionUsecase) saveFeedbackToChat(_ context.Context, sessionID string, analysis string, recommendations string) error {
+func (u *dyslexiaQuestionUsecase) saveFeedbackToChat(_ context.Context, sessionID string, analysis string, _ string) error {
 	// Check if feedback already exists for this session
 	existingMessages, _ := u.cfg.Repository.FindChatMessagesBySessionID(u.cfg.DB, sessionID, 1)
 	if len(existingMessages) > 0 && existingMessages[0].Role == "assistant" {
@@ -916,8 +915,8 @@ func (u *dyslexiaQuestionUsecase) saveFeedbackToChat(_ context.Context, sessionI
 		return nil
 	}
 
-	// Combine analysis and recommendations into feedback message
-	feedbackMessage := fmt.Sprintf("**📊 Hasil Analisis Ujian Kamu**\n\n%s\n\n**💡 Rekomendasi:**\n%s", analysis, recommendations)
+	// Analysis already includes recommendations, no need to combine
+	feedbackMessage := fmt.Sprintf("**📊 Hasil Analisis Ujian Kamu**\n\n%s", analysis)
 
 	// Save as assistant message
 	chatMsg := &internalEntity.ChatMessage{
@@ -987,7 +986,7 @@ Task:
 2. **IF there's previous session data**: Compare current performance with previous sessions and mention if there's improvement, decline, or consistency
 3. **IF this is first session**: Focus on current performance and set baseline expectations
 4. Identify which letter pairs need most attention
-5. Give 2-3 specific, actionable recommendations for improvement
+5. Include 2-3 specific, actionable recommendations within the analysis
 6. Determine overall performance level by considering MULTIPLE factors:
    - Accuracy rate (primary factor)
    - **Progress trend** (improved/declined compared to previous sessions)
@@ -996,8 +995,8 @@ Task:
    - Number of total questions attempted (shows engagement)
    - Pattern of improvement or consistent mistakes
 
-Return response as JSON with three fields:
-{"analysis":"...","recommendations":"...","overall_value":"..."}
+Return response as JSON with TWO fields only:
+{"analysis":"... (include recommendations here)","overall_value":"..."}
 
 For overall_value, use one of these Indonesian terms based on HOLISTIC evaluation:
 - "excellent" (90-100% accuracy, minimal/no consistent error patterns, good engagement)
@@ -1006,9 +1005,10 @@ For overall_value, use one of these Indonesian terms based on HOLISTIC evaluatio
 - "cukup" (60-69% accuracy, notable error patterns, needs focused practice)
 - "perlu peningkatan" (below 60% accuracy, significant error patterns, needs intensive support)
 
-IMPORTANT: Don't judge only by accuracy percentage. A child with 75% accuracy but consistent errors on one specific letter pair might need different evaluation than one with same accuracy but random errors.
-
-Keep the language simple, encouraging, and suitable for parents/teachers of young children.`
+IMPORTANT: 
+1. Don't judge only by accuracy percentage. 
+2. Include recommendations WITHIN the analysis field, not as separate field.
+3. Keep the language simple, encouraging, and suitable for parents/teachers of young children.`
 
 	// Retry mechanism: try up to 3 times before falling back
 	maxRetries := 3
@@ -1040,9 +1040,8 @@ Keep the language simple, encouraging, and suitable for parents/teachers of youn
 		clean = strings.TrimSpace(clean)
 
 		var result struct {
-			Analysis        string `json:"analysis"`
-			Recommendations string `json:"recommendations"`
-			OverallValue    string `json:"overall_value"`
+			Analysis     string `json:"analysis"`
+			OverallValue string `json:"overall_value"`
 		}
 
 		if err := json.Unmarshal([]byte(clean), &result); err != nil {
@@ -1061,12 +1060,12 @@ Keep the language simple, encouraging, and suitable for parents/teachers of youn
 
 		// Success!
 		fmt.Printf("[AI ANALYSIS] Success on attempt %d\n", attempt)
-		return result.Analysis, result.Recommendations, result.OverallValue
+		return result.Analysis, "", result.OverallValue
 	}
 
 	// Shouldn't reach here, but just in case
 	return "Sesi latihan telah selesai. Anak menunjukkan kemajuan yang baik.",
-		"Terus berlatih secara konsisten untuk hasil yang lebih baik.",
+		"",
 		"baik"
 }
 
@@ -1111,10 +1110,7 @@ Konteks Sesi Latihan:
 - Tingkat Akurasi: %s
 - Nilai Keseluruhan: %s
 
-Analisis AI:
-%s
-
-Rekomendasi:
+Analisis AI (sudah termasuk rekomendasi):
 %s
 
 Tugas kamu:
@@ -1129,7 +1125,6 @@ Tugas kamu:
 		cachedAnalysis.AccuracyRate,
 		cachedAnalysis.OverallValue,
 		cachedAnalysis.AIAnalysis,
-		cachedAnalysis.Recommendations,
 	)
 
 	// 3. Retrieve last 10 chat messages for conversation continuity
