@@ -84,7 +84,8 @@ type SessionReport struct {
 	OverallValue    string         `json:"overall_value"`
 	ErrorPatterns   []ErrorPattern `json:"error_patterns"`
 	DifficultyStats map[string]int `json:"difficulty_stats"`
-	AIAnalysys      string         `json:"ai_analysis"` // Already includes recommendations
+	AIAnalysys      string         `json:"ai_analysis"`
+	Recommendations string         `json:"recommendations"`
 }
 
 // Chat request
@@ -94,21 +95,13 @@ type ChatRequest struct {
 
 // Chat response
 type ChatResponse struct {
-	Response               string                  `json:"response"`
-	SessionID              string                  `json:"session_id"`
-	TrainingRecommendation *TrainingRecommendation `json:"training_recommendation,omitempty"`
-}
-
-// Training recommendation for specific letter pairs
-type TrainingRecommendation struct {
-	LetterPairs []string `json:"letter_pairs"`
-	Reason      string   `json:"reason"`
+	Response  string `json:"response"`
+	SessionID string `json:"session_id"`
 }
 
 // Chat history item
 type ChatHistoryItem struct {
-	Role                   string `json:"role"`
-	Message                string `json:"message"`
-	TrainingRecommendation string `json:"training_recommendation,omitempty"` // comma-separated: "b-d,m-w"
-	CreatedAt              string `json:"created_at"`
+	Role      string `json:"role"`
+	Message   string `json:"message"`
+	CreatedAt string `json:"created_at"`
 }

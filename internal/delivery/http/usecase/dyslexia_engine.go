@@ -848,7 +848,7 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 
 	// Generate Gemini analysis (with 3x retry built-in)
 	fmt.Printf("[SESSION REPORT] Generating AI analysis for session %s...\n", sessionID)
-	geminiAnalysis, _, overallValue := u.generateAIAnalysis(ctx, answers, errorPatterns, accuracyRate)
+	geminiAnalysis, recommendations, overallValue := u.generateAIAnalysis(ctx, answers, errorPatterns, accuracyRate)
 	fmt.Printf("[SESSION REPORT] AI analysis generated successfully\n")
 
 	report := &entity.SessionReport{
@@ -860,7 +860,8 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 		OverallValue:    overallValue,
 		ErrorPatterns:   errorPatterns,
 		DifficultyStats: difficultyStats,
-		AIAnalysys:      geminiAnalysis, // Already includes recommendations
+		AIAnalysys:      geminiAnalysis,
+		Recommendations: recommendations,
 	}
 
 	// Save analysis to cache for chatbot
@@ -870,7 +871,7 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 
 	// Save AI analysis as first message in chat history
 	fmt.Printf("[SESSION REPORT] Saving feedback to chat history...\n")
-	if err := u.saveFeedbackToChat(ctx, sessionID, geminiAnalysis, ""); err != nil {
+	if err := u.saveFeedbackToChat(ctx, sessionID, geminiAnalysis, recommendations); err != nil {
 		fmt.Printf("Warning: failed to save feedback to chat: %v\n", err)
 	} else {
 		fmt.Printf("[SESSION REPORT] Feedback saved to chat successfully\n")
@@ -898,8 +899,8 @@ func (u *dyslexiaQuestionUsecase) saveAnalysisCache(_ context.Context, report *e
 		WrongAnswers:    report.WrongAnswers,
 		AccuracyRate:    report.AccuracyRate,
 		OverallValue:    report.OverallValue,
-		AIAnalysis:      report.AIAnalysys, // Already includes recommendations
-		Recommendations: "",                // Deprecated, kept empty for backward compatibility
+		AIAnalysis:      report.AIAnalysys,
+		Recommendations: report.Recommendations,
 		ErrorPatterns:   string(errorPatternsJSON),
 		DifficultyStats: string(difficultyStatsJSON),
 	}
@@ -907,7 +908,7 @@ func (u *dyslexiaQuestionUsecase) saveAnalysisCache(_ context.Context, report *e
 	return u.cfg.Repository.CreateOrUpdateAnalysisCache(u.cfg.DB, cache)
 }
 
-func (u *dyslexiaQuestionUsecase) saveFeedbackToChat(_ context.Context, sessionID string, analysis string, _ string) error {
+func (u *dyslexiaQuestionUsecase) saveFeedbackToChat(_ context.Context, sessionID string, analysis string, recommendations string) error {
 	// Check if feedback already exists for this session
 	existingMessages, _ := u.cfg.Repository.FindChatMessagesBySessionID(u.cfg.DB, sessionID, 1)
 	if len(existingMessages) > 0 && existingMessages[0].Role == "assistant" {
@@ -915,8 +916,8 @@ func (u *dyslexiaQuestionUsecase) saveFeedbackToChat(_ context.Context, sessionI
 		return nil
 	}
 
-	// Analysis already includes recommendations, no need to combine
-	feedbackMessage := fmt.Sprintf("**📊 Hasil Analisis Ujian Kamu**\n\n%s", analysis)
+	// Combine analysis and recommendations into feedback message
+	feedbackMessage := fmt.Sprintf("**📊 Hasil Analisis Ujian Kamu**\n\n%s\n\n**💡 Rekomendasi:**\n%s", analysis, recommendations)
 
 	// Save as assistant message
 	chatMsg := &internalEntity.ChatMessage{
@@ -983,10 +984,10 @@ Error Patterns by Letter Pairs:
 	prompt += `
 Task:
 1. Provide a brief, caring analysis in Indonesian about the child's learning patterns
-2. **IF there's previous session data**: Compare current performance with previous sessions and mention if there's improvement, decline, or consistency
+2. **IF there's previous session data**: Compare current performance with previous sessions and mention if there's improvement, decline, or consistency  
 3. **IF this is first session**: Focus on current performance and set baseline expectations
 4. Identify which letter pairs need most attention
-5. Include 2-3 specific, actionable recommendations within the analysis
+5. Give 2-3 specific, actionable recommendations for improvement
 6. Determine overall performance level by considering MULTIPLE factors:
    - Accuracy rate (primary factor)
    - **Progress trend** (improved/declined compared to previous sessions)
@@ -995,8 +996,13 @@ Task:
    - Number of total questions attempted (shows engagement)
    - Pattern of improvement or consistent mistakes
 
-Return response as JSON with TWO fields only:
-{"analysis":"... (include recommendations here)","overall_value":"..."}
+Return response as JSON with THREE fields:
+{"analysis":"...","recommendations":"...","overall_value":"..."}
+
+IMPORTANT: 
+- For recommendations field, return as a SINGLE STRING, not an array
+- Example: "Fokus latihan pada huruf b-d. Gunakan metode visual. Berlatih setiap hari."
+- Don't judge only by accuracy percentage
 
 For overall_value, use one of these Indonesian terms based on HOLISTIC evaluation:
 - "excellent" (90-100% accuracy, minimal/no consistent error patterns, good engagement)
@@ -1005,10 +1011,7 @@ For overall_value, use one of these Indonesian terms based on HOLISTIC evaluatio
 - "cukup" (60-69% accuracy, notable error patterns, needs focused practice)
 - "perlu peningkatan" (below 60% accuracy, significant error patterns, needs intensive support)
 
-IMPORTANT: 
-1. Don't judge only by accuracy percentage. 
-2. Include recommendations WITHIN the analysis field, not as separate field.
-3. Keep the language simple, encouraging, and suitable for parents/teachers of young children.`
+Keep the language simple, encouraging, and suitable for parents/teachers of young children.`
 
 	// Retry mechanism: try up to 3 times before falling back
 	maxRetries := 3
@@ -1040,8 +1043,9 @@ IMPORTANT:
 		clean = strings.TrimSpace(clean)
 
 		var result struct {
-			Analysis     string `json:"analysis"`
-			OverallValue string `json:"overall_value"`
+			Analysis        string `json:"analysis"`
+			Recommendations string `json:"recommendations"`
+			OverallValue    string `json:"overall_value"`
 		}
 
 		if err := json.Unmarshal([]byte(clean), &result); err != nil {
@@ -1060,12 +1064,12 @@ IMPORTANT:
 
 		// Success!
 		fmt.Printf("[AI ANALYSIS] Success on attempt %d\n", attempt)
-		return result.Analysis, "", result.OverallValue
+		return result.Analysis, result.Recommendations, result.OverallValue
 	}
 
 	// Shouldn't reach here, but just in case
 	return "Sesi latihan telah selesai. Anak menunjukkan kemajuan yang baik.",
-		"",
+		"Terus berlatih secara konsisten untuk hasil yang lebih baik.",
 		"baik"
 }
 
@@ -1098,7 +1102,7 @@ func (u *dyslexiaQuestionUsecase) ChatWithBot(ctx context.Context, sessionID str
 
 	// Get error patterns for training recommendations
 	answers, _ := u.cfg.Repository.FindUserAnswersBySessionID(u.cfg.DB, sessionID)
-	errorPatterns := u.analyzeErrorPatterns(answers)
+	_ = u.analyzeErrorPatterns(answers) // Keep for potential future use
 
 	// 2. Build system context from cached analysis
 	systemContext := fmt.Sprintf(`Kamu adalah asisten pembelajaran yang membantu anak-anak dengan disleksia dalam bahasa Indonesia.
@@ -1110,7 +1114,10 @@ Konteks Sesi Latihan:
 - Tingkat Akurasi: %s
 - Nilai Keseluruhan: %s
 
-Analisis AI (sudah termasuk rekomendasi):
+Analisis AI:
+%s
+
+Rekomendasi:
 %s
 
 Tugas kamu:
@@ -1125,6 +1132,7 @@ Tugas kamu:
 		cachedAnalysis.AccuracyRate,
 		cachedAnalysis.OverallValue,
 		cachedAnalysis.AIAnalysis,
+		cachedAnalysis.Recommendations,
 	)
 
 	// 3. Retrieve last 10 chat messages for conversation continuity
@@ -1190,11 +1198,7 @@ Tugas kamu:
 		return nil, fmt.Errorf("failed to generate chatbot response: %w", chatErr)
 	}
 
-	// 6. Determine if this response should include training recommendation
-	// Add training recommendation randomly in about 30% of responses, or when specifically asked
-	trainingRec := u.shouldIncludeTrainingRecommendation(userMessage, chatHistory, errorPatterns)
-
-	// 7. Save both user message and bot response to database
+	// 6. Save both user message and bot response to database
 	// Save user message
 	userMsg := &internalEntity.ChatMessage{
 		SessionID: sessionID,
@@ -1205,26 +1209,19 @@ Tugas kamu:
 		// Ignore save error, continue with response
 	}
 
-	// Save bot response with training recommendation
-	trainingRecStr := ""
-	if trainingRec != nil && len(trainingRec.LetterPairs) > 0 {
-		trainingRecStr = strings.Join(trainingRec.LetterPairs, ",")
-	}
-
+	// Save bot response
 	botMsg := &internalEntity.ChatMessage{
-		SessionID:              sessionID,
-		Role:                   "assistant",
-		Message:                botResponse,
-		TrainingRecommendation: trainingRecStr,
+		SessionID: sessionID,
+		Role:      "assistant",
+		Message:   botResponse,
 	}
 	if err := u.cfg.Repository.CreateChatMessage(u.cfg.DB, botMsg); err != nil {
 		// Ignore save error, continue with response
 	}
 
 	return &entity.ChatResponse{
-		Response:               botResponse,
-		SessionID:              sessionID,
-		TrainingRecommendation: trainingRec,
+		Response:  botResponse,
+		SessionID: sessionID,
 	}, nil
 }
 
@@ -1238,10 +1235,9 @@ func (u *dyslexiaQuestionUsecase) GetChatHistory(ctx context.Context, sessionID 
 	history := make([]entity.ChatHistoryItem, 0, len(messages))
 	for _, msg := range messages {
 		history = append(history, entity.ChatHistoryItem{
-			Role:                   msg.Role,
-			Message:                msg.Message,
-			TrainingRecommendation: msg.TrainingRecommendation,
-			CreatedAt:              msg.CreatedAt.Format(time.RFC3339),
+			Role:      msg.Role,
+			Message:   msg.Message,
+			CreatedAt: msg.CreatedAt.Format(time.RFC3339),
 		})
 	}
 
@@ -1273,113 +1269,4 @@ func (u *dyslexiaQuestionUsecase) analyzeErrorPatterns(answers []internalEntity.
 	}
 
 	return letterPairErrors
-}
-
-// shouldIncludeTrainingRecommendation determines if training recommendation should be included
-func (u *dyslexiaQuestionUsecase) shouldIncludeTrainingRecommendation(
-	userMessage string,
-	chatHistory []internalEntity.ChatMessage,
-	errorPatterns map[string]struct {
-		errors int
-		total  int
-	},
-) *entity.TrainingRecommendation {
-	// No error patterns to recommend
-	if len(errorPatterns) == 0 {
-		return nil
-	}
-
-	// Check if user is asking about training, practice, or improvement
-	lowerMsg := strings.ToLower(userMessage)
-	keywords := []string{"latihan", "belajar", "練習", "meningkatkan", "perbaiki", "praktek", "training", "cara"}
-	explicitlyAsked := false
-	for _, keyword := range keywords {
-		if strings.Contains(lowerMsg, keyword) {
-			explicitlyAsked = true
-			break
-		}
-	}
-
-	// Count how many recent messages already included recommendations (avoid spamming)
-	recentRecommendations := 0
-	maxHistoryCheck := 6
-	if len(chatHistory) < maxHistoryCheck {
-		maxHistoryCheck = len(chatHistory)
-	}
-	for i := len(chatHistory) - maxHistoryCheck; i < len(chatHistory); i++ {
-		if chatHistory[i].Role == "assistant" && strings.Contains(strings.ToLower(chatHistory[i].Message), "latihan") {
-			recentRecommendations++
-		}
-	}
-
-	// Decision logic:
-	// 1. If explicitly asked, always provide recommendation
-	// 2. If no recent recommendations (last 3 messages), 30% chance
-	// 3. If already gave recommendation recently, skip unless explicitly asked
-	shouldInclude := false
-	if explicitlyAsked {
-		shouldInclude = true
-	} else if recentRecommendations == 0 {
-		// 30% random chance
-		shouldInclude = u.rnd.Float32() < 0.3
-	}
-
-	if !shouldInclude {
-		return nil
-	}
-
-	// Find letter pairs with highest error rates (>= 40% error rate or at least 2 errors)
-	type pairError struct {
-		pair      string
-		errorRate float64
-		errors    int
-	}
-	var problematicPairs []pairError
-
-	for pair, stats := range errorPatterns {
-		if stats.total == 0 {
-			continue
-		}
-		errorRate := float64(stats.errors) / float64(stats.total)
-		// Include if error rate >= 40% OR has at least 2 errors
-		if errorRate >= 0.4 || stats.errors >= 2 {
-			problematicPairs = append(problematicPairs, pairError{
-				pair:      pair,
-				errorRate: errorRate,
-				errors:    stats.errors,
-			})
-		}
-	}
-
-	// Sort by error count (descending)
-	for i := 0; i < len(problematicPairs); i++ {
-		for j := i + 1; j < len(problematicPairs); j++ {
-			if problematicPairs[j].errors > problematicPairs[i].errors {
-				problematicPairs[i], problematicPairs[j] = problematicPairs[j], problematicPairs[i]
-			}
-		}
-	}
-
-	// Take top 2-3 letter pairs
-	maxPairs := 3
-	if len(problematicPairs) > maxPairs {
-		problematicPairs = problematicPairs[:maxPairs]
-	}
-
-	if len(problematicPairs) == 0 {
-		return nil
-	}
-
-	// Build recommendation
-	letterPairs := make([]string, 0, len(problematicPairs))
-	for _, pe := range problematicPairs {
-		letterPairs = append(letterPairs, pe.pair)
-	}
-
-	reason := fmt.Sprintf("Berdasarkan hasil latihan, huruf-huruf ini masih sering tertukar. Fokus latihan pada pasangan huruf ini akan sangat membantu meningkatkan kemampuan membaca.")
-
-	return &entity.TrainingRecommendation{
-		LetterPairs: letterPairs,
-		Reason:      reason,
-	}
 }
