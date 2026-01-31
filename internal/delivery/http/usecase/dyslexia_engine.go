@@ -502,7 +502,12 @@ func (u *dyslexiaQuestionUsecase) generateFromAI(ctx context.Context, difficulty
 }
 
 func generateQuestionID(word string, difficulty entity.Difficulty) string {
-	sum := sha256.Sum256([]byte(word + "|" + string(difficulty)))
+	// Add timestamp and random component to ensure uniqueness even for same word
+	timestamp := time.Now().UnixNano()
+	randomBytes := make([]byte, 4)
+	rand.Read(randomBytes)
+	uniqueness := fmt.Sprintf("%d-%x", timestamp, randomBytes)
+	sum := sha256.Sum256([]byte(word + "|" + string(difficulty) + "|" + uniqueness))
 	return "q-" + hex.EncodeToString(sum[:8])
 }
 
@@ -708,6 +713,11 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 		fmt.Printf("Warning: failed to save analysis cache: %v\n", err)
 	}
 
+	// Save AI analysis as first message in chat history
+	if err := u.saveFeedbackToChat(ctx, sessionID, geminiAnalysis, recommendations); err != nil {
+		fmt.Printf("Warning: failed to save feedback to chat: %v\n", err)
+	}
+
 	return report, nil
 }
 
@@ -737,6 +747,27 @@ func (u *dyslexiaQuestionUsecase) saveAnalysisCache(_ context.Context, report *e
 	}
 
 	return u.cfg.Repository.CreateOrUpdateAnalysisCache(u.cfg.DB, cache)
+}
+
+func (u *dyslexiaQuestionUsecase) saveFeedbackToChat(_ context.Context, sessionID string, analysis string, recommendations string) error {
+	// Check if feedback already exists for this session
+	existingMessages, _ := u.cfg.Repository.FindChatMessagesBySessionID(u.cfg.DB, sessionID, 1)
+	if len(existingMessages) > 0 && existingMessages[0].Role == "assistant" {
+		// Feedback already exists, don't add duplicate
+		return nil
+	}
+
+	// Combine analysis and recommendations into feedback message
+	feedbackMessage := fmt.Sprintf("**📊 Hasil Analisis Ujian Kamu**\n\n%s\n\n**💡 Rekomendasi:**\n%s", analysis, recommendations)
+
+	// Save as assistant message
+	chatMsg := &internalEntity.ChatMessage{
+		SessionID: sessionID,
+		Role:      "assistant",
+		Message:   feedbackMessage,
+	}
+
+	return u.cfg.Repository.CreateChatMessage(u.cfg.DB, chatMsg)
 }
 
 func (u *dyslexiaQuestionUsecase) generateAIAnalysis(ctx context.Context, answers []internalEntity.UserAnswer, errorPatterns []entity.ErrorPattern, accuracyRate string) (string, string, string) {
