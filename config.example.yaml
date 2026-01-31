@@ -1,0 +1,52 @@
+app:
+  name: dinacom-be
+
+api:
+  prefork: false
+  host: 127.0.0.1
+  port: 8080
+  cors:
+    origins: "*" # seperated by comma, e.g: https://example.com,https://example2.com
+
+log:
+  level: 6 # supported: 0 (panic) - 6 (trace)
+  format: text # supported: json, text
+
+database:
+  username: db
+  password: db
+  host: 127.0.0.1
+  port: 5436
+  dbname: db
+  sslmode: disable # supported: disable, require, verify-ca, verify-full
+  timezone: UTC
+
+llm:
+  gemini:
+    api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    base_url: "https://ai.sumopod.com/v1"
+    model: "gpt-4o-mini"
+    # Prompt template supports variables:
+    # {{difficulty}}, {{targetLetterPair}}, {{targetLetter}}, {{correctWord}}, {{distractors}}, {{hint}}
+    prompt_template: |
+      You are generating a multiple-choice reading question for Indonesian dyslexic children (TK-SD).
+
+      Design principles:
+      - Keep instructions very short, friendly, and clear
+      - High letter contrast: use UPPERCASE words in options
+      - Focus on confusion pairs (e.g., b-d, p-q)
+      - Do not add extra distractors beyond the given ones
+
+      Difficulty: {{difficulty}}
+      Target letter pair: {{targetLetterPair}}
+      Target letter: {{targetLetter}}
+      Correct word: {{correctWord}}
+      Distractors (must use exactly these): {{distractors}}
+      Hint (optional): {{hint}}
+
+      Task:
+      Create a questionText in Indonesian, and an options array of 4 words containing the correct word and the distractors, shuffled.
+
+      IMPORTANT: Return ONLY valid JSON with NO additional text, NO markdown formatting, NO code blocks.
+      JSON format:
+      {"questionText":"...","options":["...","...","...","..."]}

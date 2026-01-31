@@ -1,0 +1,974 @@
+  // ==================== EASY QUESTIONS ====================
+
+  // b-d confusion (most common)
+
+  {
+
+    id: 'e-bd-1',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BATU',
+
+    distractors: ['DATU', 'MATU', 'SATU'
+  ],
+
+    hint: 'Kata dimulai dengan huruf B, seperti BOLA'
+
+ 
+},
+
+  {
+
+    id: 'e-bd-2',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'D',
+
+    correctWord: 'DASI',
+
+    distractors: ['BASI', 'PASI', 'NASI'
+  ],
+
+    hint: 'Kata dimulai dengan huruf D, seperti DADU'
+
+ 
+},
+
+  {
+
+    id: 'e-bd-3',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BOLA',
+
+    distractors: ['DOLA', 'KOLA', 'SOLA'
+  ],
+
+    hint: 'Kata dimulai dengan huruf B, benda bundar untuk main'
+
+ 
+},
+
+  {
+
+    id: 'e-bd-4',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'D',
+
+    correctWord: 'DADU',
+
+    distractors: ['BADU', 'RADU', 'KADU'
+  ],
+
+    hint: 'Kata dimulai dengan huruf D, mainan kotak untuk dilempar'
+
+ 
+},
+
+  {
+
+    id: 'e-bd-5',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BUKU',
+
+    distractors: ['DUKU', 'SUKU', 'TUKU'
+  ],
+
+    hint: 'Kata dimulai dengan huruf B, untuk dibaca'
+
+ 
+},
+
+  // m-w confusion
+
+  {
+
+    id: 'e-mw-1',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'M',
+
+    correctWord: 'MAMA',
+
+    distractors: ['WAMA', 'PAPA', 'RAMA'
+  ],
+
+    hint: 'Kata dimulai dengan huruf M, sebutan untuk ibu'
+
+ 
+},
+
+  {
+
+    id: 'e-mw-2',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'W',
+
+    correctWord: 'WAJA',
+
+    distractors: ['MAJA', 'RAJA', 'TAJA'
+  ],
+
+    hint: 'Kata dimulai dengan huruf W, bagian depan mobil'
+
+ 
+},
+
+  {
+
+    id: 'e-mw-3',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'M',
+
+    correctWord: 'MEJA',
+
+    distractors: ['WEJA', 'REJA', 'TEJA'
+  ],
+
+    hint: 'Kata dimulai dengan huruf M, tempat makan atau belajar'
+
+ 
+},
+
+  {
+
+    id: 'e-mw-4',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'W',
+
+    correctWord: 'WALI',
+
+    distractors: ['MALI', 'BALI', 'KALI'
+  ],
+
+    hint: 'Kata dimulai dengan huruf W, orang yang menjaga'
+
+ 
+},
+
+  
+
+  // p-q confusion
+
+  {
+
+    id: 'e-pq-1',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'p-q',
+
+    targetLetter: 'P',
+
+    correctWord: 'PAKU',
+
+    distractors: ['QAKU', 'BAKU', 'MAKU'
+  ],
+
+    hint: 'Kata dimulai dengan huruf P, benda runcing dari besi'
+
+ 
+},
+
+  {
+
+    id: 'e-pq-2',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'p-q',
+
+    targetLetter: 'P',
+
+    correctWord: 'PAGI',
+
+    distractors: ['QAGI', 'BAGI', 'LAGI'
+  ],
+
+    hint: 'Kata dimulai dengan huruf P, waktu setelah bangun tidur'
+
+ 
+},
+
+  
+
+  // n-u confusion (rotational)
+
+  {
+
+    id: 'e-nu-1',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'n-u',
+
+    targetLetter: 'N',
+
+    correctWord: 'NASI',
+
+    distractors: ['UASI', 'BASI', 'RASI'
+  ],
+
+    hint: 'Kata dimulai dengan huruf N, makanan pokok dari beras'
+
+ 
+},
+
+  {
+
+    id: 'e-nu-2',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'n-u',
+
+    targetLetter: 'N',
+
+    correctWord: 'NAGA',
+
+    distractors: ['UAGA', 'RAGA', 'TAGA'
+  ],
+
+    hint: 'Kata dimulai dengan huruf N, hewan mitos yang besar'
+
+ 
+},
+
+  {
+
+    id: 'e-nu-3',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'n-u',
+
+    targetLetter: 'U',
+
+    correctWord: 'ULAR',
+
+    distractors: ['NLAR', 'ILAR', 'JLAR'
+  ],
+
+    hint: 'Kata dimulai dengan huruf U, hewan merayap panjang'
+
+ 
+},
+
+  
+
+  // Additional easy questions
+
+  {
+
+    id: 'e-bd-6',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BABI',
+
+    distractors: ['DABI', 'KABI', 'RABI'
+  ],
+
+    hint: 'Kata dimulai dengan huruf B, hewan berkaki empat'
+
+ 
+},
+
+  {
+
+    id: 'e-bd-7',
+
+    difficulty: 'easy',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'D',
+
+    correctWord: 'DADA',
+
+    distractors: ['BADA', 'RADA', 'KADA'
+  ],
+
+    hint: 'Kata dimulai dengan huruf D, bagian tubuh di depan'
+
+ 
+},
+
+  
+
+  // ==================== MEDIUM QUESTIONS ====================
+
+  // b-d patterns
+
+  {
+
+    id: 'm-bd-1',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BARU',
+
+    distractors: ['DARU', 'BIRU', 'DURI'
+  ],
+
+    hint: 'Kata dengan huruf B, lawan dari lama'
+
+ 
+},
+
+  {
+
+    id: 'm-bd-2',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'D',
+
+    correctWord: 'DURI',
+
+    distractors: ['BURI', 'BIRU', 'KURI'
+  ],
+
+    hint: 'Kata dengan huruf D, benda tajam di tumbuhan'
+
+ 
+},
+
+  {
+
+    id: 'm-bd-3',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BAYI',
+
+    distractors: ['DAYI', 'RABI', 'KADI'
+  ],
+
+    hint: 'Kata dengan huruf B, anak yang baru lahir'
+
+ 
+},
+
+  {
+
+    id: 'm-bd-4',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'D',
+
+    correctWord: 'DARI',
+
+    distractors: ['BARI', 'HARI', 'LARI'
+  ],
+
+    hint: 'Kata dengan huruf D, menunjukkan asal'
+
+ 
+},
+
+  {
+
+    id: 'm-bd-5',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BUDI',
+
+    distractors: ['DUDI', 'RUDI', 'SUDI'
+  ],
+
+    hint: 'Kata dengan huruf B, nama orang atau perilaku baik'
+
+ 
+},
+
+  {
+
+    id: 'm-bd-6',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'D',
+
+    correctWord: 'DUIT',
+
+    distractors: ['BUIT', 'SUIT', 'TUIT'
+  ],
+
+    hint: 'Kata dengan huruf D, uang untuk belanja'
+
+ 
+},
+
+  
+
+  // m-w patterns
+
+  {
+
+    id: 'm-mw-1',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'M',
+
+    correctWord: 'MATI',
+
+    distractors: ['WATI', 'PATI', 'SATI'
+  ],
+
+    hint: 'Kata dengan huruf M, lawan dari hidup'
+
+ 
+},
+
+  {
+
+    id: 'm-mw-2',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'W',
+
+    correctWord: 'WARNA',
+
+    distractors: ['MARNA', 'BARNA', 'DARNA'
+  ],
+
+    hint: 'Kata dengan huruf W, merah, biru, hijau adalah...'
+
+ 
+},
+
+  {
+
+    id: 'm-mw-3',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'M',
+
+    correctWord: 'MADU',
+
+    distractors: ['WADU', 'RADU', 'PADU'
+  ],
+
+    hint: 'Kata dengan huruf M, cairan manis dari lebah'
+
+ 
+},
+
+  {
+
+    id: 'm-mw-4',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'W',
+
+    correctWord: 'WAKTU',
+
+    distractors: ['MAKTU', 'FAKTU', 'PAKTU'
+  ],
+
+    hint: 'Kata dengan huruf W, jam menunjukkan...'
+
+ 
+},
+
+  
+
+  // p-q patterns
+
+  {
+
+    id: 'm-pq-1',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'p-q',
+
+    targetLetter: 'P',
+
+    correctWord: 'PADI',
+
+    distractors: ['QADI', 'RADI', 'BADI'
+  ],
+
+    hint: 'Kata dengan huruf P, tanaman yang jadi nasi'
+
+ 
+},
+
+  {
+
+    id: 'm-pq-2',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'p-q',
+
+    targetLetter: 'P',
+
+    correctWord: 'PETA',
+
+    distractors: ['QETA', 'META', 'BETA'
+  ],
+
+    hint: 'Kata dengan huruf P, gambar wilayah atau jalan'
+
+ 
+},
+
+  
+
+  // n-u patterns
+
+  {
+
+    id: 'm-nu-1',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'n-u',
+
+    targetLetter: 'N',
+
+    correctWord: 'NAMA',
+
+    distractors: ['UAMA', 'RAMA', 'TAMA'
+  ],
+
+    hint: 'Kata dengan huruf N, identitas seseorang'
+
+ 
+},
+
+  {
+
+    id: 'm-nu-2',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'n-u',
+
+    targetLetter: 'N',
+
+    correctWord: 'NANTI',
+
+    distractors: ['UANTI', 'BANTI', 'PANTI'
+  ],
+
+    hint: 'Kata dengan huruf N, menunjukkan waktu yang akan datang'
+
+ 
+},
+
+  {
+
+    id: 'm-nu-3',
+
+    difficulty: 'medium',
+
+    targetLetterPair: 'n-u',
+
+    targetLetter: 'U',
+
+    correctWord: 'UDARA',
+
+    distractors: ['NDARA', 'ADARA', 'IDARA'
+  ],
+
+    hint: 'Kata dengan huruf U, yang kita hirup untuk bernapas'
+
+ 
+},
+
+  
+
+  // ==================== HARD QUESTIONS ====================
+
+  // Complex b-d patterns
+
+  {
+
+    id: 'h-bd-1',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BERITA',
+
+    distractors: ['DERITA', 'CERITA', 'SERITA'
+  ],
+
+    hint: 'Kata dengan huruf B, informasi atau kabar'
+
+ 
+},
+
+  {
+
+    id: 'h-bd-2',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'D',
+
+    correctWord: 'DERITA',
+
+    distractors: ['BERITA', 'CERITA', 'SERITA'
+  ],
+
+    hint: 'Kata dengan huruf D, penderitaan atau kesusahan'
+
+ 
+},
+
+  {
+
+    id: 'h-bd-3',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BAKTI',
+
+    distractors: ['DAKTI', 'SAKTI', 'FAKTI'
+  ],
+
+    hint: 'Kata dengan huruf B, pengabdian atau pelayanan'
+
+ 
+},
+
+  {
+
+    id: 'h-bd-4',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'D',
+
+    correctWord: 'DALAM',
+
+    distractors: ['BALAM', 'SALAM', 'MALAM'
+  ],
+
+    hint: 'Kata dengan huruf D, lawan dari dangkal atau luar'
+
+ 
+},
+
+  {
+
+    id: 'h-bd-5',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'B',
+
+    correctWord: 'BUDAYA',
+
+    distractors: ['DUDAYA', 'SUDAYA', 'RUDAYA'
+  ],
+
+    hint: 'Kata dengan huruf B, kebiasaan atau tradisi'
+
+ 
+},
+
+  {
+
+    id: 'h-bd-6',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'b-d',
+
+    targetLetter: 'D',
+
+    correctWord: 'DUNIA',
+
+    distractors: ['BUNIA', 'SUNIA', 'RUNIA'
+  ],
+
+    hint: 'Kata dengan huruf D, planet tempat kita tinggal'
+
+ 
+},
+
+  
+
+  // Complex m-w patterns
+
+  {
+
+    id: 'h-mw-1',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'M',
+
+    correctWord: 'MAWAR',
+
+    distractors: ['WAWAR', 'SAWAR', 'TAWAR'
+  ],
+
+    hint: 'Kata dengan huruf M, bunga berduri yang indah'
+
+ 
+},
+
+  {
+
+    id: 'h-mw-2',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'W',
+
+    correctWord: 'WAJIB',
+
+    distractors: ['MAJIB', 'SAJIB', 'TAJIB'
+  ],
+
+    hint: 'Kata dengan huruf W, harus dilakukan'
+
+ 
+},
+
+  {
+
+    id: 'h-mw-3',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'M',
+
+    correctWord: 'MIMPI',
+
+    distractors: ['WIMPI', 'SIMPI', 'TIMPI'
+  ],
+
+    hint: 'Kata dengan huruf M, angan-angan saat tidur'
+
+ 
+},
+
+  {
+
+    id: 'h-mw-4',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'm-w',
+
+    targetLetter: 'W',
+
+    correctWord: 'WAJAH',
+
+    distractors: ['MAJAH', 'RAJAH', 'SAJAH'
+  ],
+
+    hint: 'Kata dengan huruf W, muka atau rupa'
+
+ 
+},
+
+  
+
+  // Complex p-q patterns
+
+  {
+
+    id: 'h-pq-1',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'p-q',
+
+    targetLetter: 'P',
+
+    correctWord: 'PAHAM',
+
+    distractors: ['QAHAM', 'SAHAM', 'RAHAM'
+  ],
+
+    hint: 'Kata dengan huruf P, mengerti atau memahami'
+
+ 
+},
+
+  {
+
+    id: 'h-pq-2',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'p-q',
+
+    targetLetter: 'P',
+
+    correctWord: 'PIDATO',
+
+    distractors: ['QIDATO', 'SIDATO', 'RIDATO'
+  ],
+
+    hint: 'Kata dengan huruf P, berbicara di depan umum'
+
+ 
+},
+
+  
+
+  // Complex n-u patterns
+
+  {
+
+    id: 'h-nu-1',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'n-u',
+
+    targetLetter: 'N',
+
+    correctWord: 'NEGARA',
+
+    distractors: ['UEGARA', 'SEGARA', 'MEGARA'
+  ],
+
+    hint: 'Kata dengan huruf N, Indonesia adalah sebuah...'
+
+ 
+},
+
+  {
+
+    id: 'h-nu-2',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'n-u',
+
+    targetLetter: 'N',
+
+    correctWord: 'NAFAS',
+
+    distractors: ['UAFAS', 'RAFAS', 'KAFAS'
+  ],
+
+    hint: 'Kata dengan huruf N, udara yang masuk dan keluar'
+
+ 
+},
+
+  {
+
+    id: 'h-nu-3',
+
+    difficulty: 'hard',
+
+    targetLetterPair: 'n-u',
+
+    targetLetter: 'U',
+
+    correctWord: 'UCAPAN',
+
+    distractors: ['NCAPAN', 'ACAPAN', 'ICAPAN'
+  ],
+
+    hint: 'Kata dengan huruf U, kata-kata yang disampaikan'
+
+ 
+},
+]
