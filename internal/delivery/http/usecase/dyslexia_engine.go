@@ -846,8 +846,10 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 		}
 	}
 
-	// Generate Gemini analysis
+	// Generate Gemini analysis (with 3x retry built-in)
+	fmt.Printf("[SESSION REPORT] Generating AI analysis for session %s...\n", sessionID)
 	geminiAnalysis, recommendations, overallValue := u.generateAIAnalysis(ctx, answers, errorPatterns, accuracyRate)
+	fmt.Printf("[SESSION REPORT] AI analysis generated successfully\n")
 
 	report := &entity.SessionReport{
 		SessionID:       sessionID,
@@ -868,8 +870,11 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 	}
 
 	// Save AI analysis as first message in chat history
+	fmt.Printf("[SESSION REPORT] Saving feedback to chat history...\n")
 	if err := u.saveFeedbackToChat(ctx, sessionID, geminiAnalysis, recommendations); err != nil {
 		fmt.Printf("Warning: failed to save feedback to chat: %v\n", err)
+	} else {
+		fmt.Printf("[SESSION REPORT] Feedback saved to chat successfully\n")
 	}
 
 	return report, nil
@@ -1005,36 +1010,64 @@ IMPORTANT: Don't judge only by accuracy percentage. A child with 75% accuracy bu
 
 Keep the language simple, encouraging, and suitable for parents/teachers of young children.`
 
-	text, err := u.cfg.Gemini.GenerateText(ctx, prompt)
-	if err != nil {
-		fmt.Printf("Gemini analysis error: %v\n", err)
-		return "Sesi latihan telah selesai. Terus berlatih untuk meningkatkan kemampuan membaca.",
-			"Fokus pada huruf-huruf yang masih sering tertukar.",
-			"baik"
+	// Retry mechanism: try up to 3 times before falling back
+	maxRetries := 3
+	var text string
+	var err error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		fmt.Printf("[AI ANALYSIS] Attempt %d/%d...\n", attempt, maxRetries)
+		text, err = u.cfg.Gemini.GenerateText(ctx, prompt)
+
+		if err != nil {
+			fmt.Printf("[AI ANALYSIS] Attempt %d failed: %v\n", attempt, err)
+			if attempt < maxRetries {
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond) // Backoff delay
+				continue
+			}
+			// All retries failed
+			fmt.Printf("[AI ANALYSIS] All %d attempts failed, using fallback\n", maxRetries)
+			return "Sesi latihan telah selesai. Terus berlatih untuk meningkatkan kemampuan membaca.",
+				"Fokus pada huruf-huruf yang masih sering tertukar.",
+				"baik"
+		}
+
+		// Parse JSON response
+		clean := strings.TrimSpace(text)
+		clean = strings.TrimPrefix(clean, "```json")
+		clean = strings.TrimPrefix(clean, "```")
+		clean = strings.TrimSuffix(clean, "```")
+		clean = strings.TrimSpace(clean)
+
+		var result struct {
+			Analysis        string `json:"analysis"`
+			Recommendations string `json:"recommendations"`
+			OverallValue    string `json:"overall_value"`
+		}
+
+		if err := json.Unmarshal([]byte(clean), &result); err != nil {
+			fmt.Printf("[AI ANALYSIS] Attempt %d - Parse error: %v\n", attempt, err)
+			fmt.Printf("[AI ANALYSIS] Response text: %s\n", text)
+			if attempt < maxRetries {
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+				continue
+			}
+			// All retries failed
+			fmt.Printf("[AI ANALYSIS] All %d attempts failed to parse, using fallback\n", maxRetries)
+			return "Sesi latihan telah selesai. Anak menunjukkan kemajuan yang baik.",
+				"Terus berlatih secara konsisten untuk hasil yang lebih baik.",
+				"baik"
+		}
+
+		// Success!
+		fmt.Printf("[AI ANALYSIS] Success on attempt %d\n", attempt)
+		return result.Analysis, result.Recommendations, result.OverallValue
 	}
 
-	// Parse JSON response
-	clean := strings.TrimSpace(text)
-	clean = strings.TrimPrefix(clean, "```json")
-	clean = strings.TrimPrefix(clean, "```")
-	clean = strings.TrimSuffix(clean, "```")
-	clean = strings.TrimSpace(clean)
-
-	var result struct {
-		Analysis        string `json:"analysis"`
-		Recommendations string `json:"recommendations"`
-		OverallValue    string `json:"overall_value"`
-	}
-
-	if err := json.Unmarshal([]byte(clean), &result); err != nil {
-		fmt.Printf("Text %s\n", text)
-		fmt.Printf("Failed to parse Gemini analysis: %v\n", err)
-		return "Sesi latihan telah selesai. Anak menunjukkan kemajuan yang baik.",
-			"Terus berlatih secara konsisten untuk hasil yang lebih baik.",
-			"baik"
-	}
-
-	return result.Analysis, result.Recommendations, result.OverallValue
+	// Shouldn't reach here, but just in case
+	return "Sesi latihan telah selesai. Anak menunjukkan kemajuan yang baik.",
+		"Terus berlatih secara konsisten untuk hasil yang lebih baik.",
+		"baik"
 }
 
 func countCorrect(answers []internalEntity.UserAnswer) int {
@@ -1133,10 +1166,33 @@ Tugas kamu:
 		Content: userMessage,
 	})
 
-	// 5. Call LLM with full context (plain text response)
-	botResponse, err := u.cfg.Gemini.GenerateChatResponse(ctx, messages)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate chatbot response: %w", err)
+	// 5. Call LLM with full context (plain text response) - with retry
+	maxRetries := 3
+	var botResponse string
+	var chatErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		fmt.Printf("[CHAT BOT] Attempt %d/%d...\n", attempt, maxRetries)
+		botResponse, chatErr = u.cfg.Gemini.GenerateChatResponse(ctx, messages)
+
+		if chatErr != nil {
+			fmt.Printf("[CHAT BOT] Attempt %d failed: %v\n", attempt, chatErr)
+			if attempt < maxRetries {
+				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond) // Backoff delay
+				continue
+			}
+			// All retries failed
+			fmt.Printf("[CHAT BOT] All %d attempts failed\n", maxRetries)
+			return nil, fmt.Errorf("failed to generate chatbot response after %d attempts: %w", maxRetries, chatErr)
+		}
+
+		// Success!
+		fmt.Printf("[CHAT BOT] Success on attempt %d\n", attempt)
+		break
+	}
+
+	if chatErr != nil {
+		return nil, fmt.Errorf("failed to generate chatbot response: %w", chatErr)
 	}
 
 	// 6. Determine if this response should include training recommendation
