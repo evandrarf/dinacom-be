@@ -223,7 +223,7 @@ func (u *dyslexiaQuestionUsecase) saveGeneratedToDB(_ context.Context, q entity.
 // generateFromDBCache retrieves previously generated questions from database
 func (u *dyslexiaQuestionUsecase) generateFromDBCache(_ context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, pattern string) ([]entity.GeneratedQuestion, error) {
 	startTime := time.Now()
-	
+
 	// Build filters for repository query
 	filters := []string{}
 	if pattern != "" {
