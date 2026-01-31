@@ -21,6 +21,5 @@ func ConvertToQuestionTemplate(dbTemplate *dbEntity.QuestionBankTemplate) (oldEn
 		TargetLetter:     dbTemplate.TargetLetter,
 		CorrectWord:      dbTemplate.CorrectWord,
 		Distractors:      distractors,
-		Hint:             dbTemplate.Hint,
 	}, nil
 }

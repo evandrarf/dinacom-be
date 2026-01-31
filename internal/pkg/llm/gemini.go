@@ -50,7 +50,7 @@ func (c *GeminiClient) GenerateText(ctx context.Context, prompt string) (string,
 			},
 			Temperature: 0.3,
 			TopP:        0.95,
-			MaxTokens:   2048,
+			MaxTokens:   2048 * 4,
 			ResponseFormat: &openai.ChatCompletionResponseFormat{
 				Type: openai.ChatCompletionResponseFormatTypeJSONObject,
 			},
@@ -58,6 +58,39 @@ func (c *GeminiClient) GenerateText(ctx context.Context, prompt string) (string,
 	)
 	if err != nil {
 		return "", fmt.Errorf("openai generate error: %w", err)
+	}
+
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("openai returned no choices")
+	}
+
+	text := resp.Choices[0].Message.Content
+	if text == "" {
+		return "", fmt.Errorf("openai returned empty response")
+	}
+
+	return text, nil
+}
+
+// GenerateChatResponse generates plain text response for chatbot (no JSON formatting)
+func (c *GeminiClient) GenerateChatResponse(ctx context.Context, messages []openai.ChatCompletionMessage) (string, error) {
+	if c.client == nil {
+		return "", fmt.Errorf("client not initialized")
+	}
+
+	resp, err := c.client.CreateChatCompletion(
+		ctx,
+		openai.ChatCompletionRequest{
+			Model:       c.Model,
+			Messages:    messages,
+			Temperature: 0.7,
+			TopP:        0.95,
+			MaxTokens:   2048,
+			// No ResponseFormat - allow plain text response
+		},
+	)
+	if err != nil {
+		return "", fmt.Errorf("openai chat error: %w", err)
 	}
 
 	if len(resp.Choices) == 0 {

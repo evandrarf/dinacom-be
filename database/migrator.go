@@ -10,6 +10,8 @@ func Migrate(db *gorm.DB) error {
 		&entity.QuestionBankTemplate{},
 		&entity.GeneratedQuestion{},
 		&entity.UserAnswer{},
+		&entity.SessionAnalysisCache{},
+		&entity.ChatMessage{},
 	)
 	return err
 }

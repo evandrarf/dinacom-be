@@ -26,27 +26,35 @@ llm:
     api_key: "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
     base_url: "https://ai.sumopod.com/v1"
     model: "gpt-4o-mini"
-    # Prompt template supports variables:
-    # {{difficulty}}, {{targetLetterPair}}, {{targetLetter}}, {{correctWord}}, {{distractors}}, {{hint}}
+    disable_ai_prompt: false # Set to true to skip AI and use fallback directly
     prompt_template: |
-      You are generating a multiple-choice reading question for Indonesian dyslexic children (TK-SD).
+      You are generating audio-based listening questions for Indonesian dyslexic children (TK-SD).
 
       Design principles:
-      - Keep instructions very short, friendly, and clear
-      - High letter contrast: use UPPERCASE words in options
-      - Focus on confusion pairs (e.g., b-d, p-q)
-      - Do not add extra distractors beyond the given ones
+      - The question text is ALWAYS static: "Dengarkan kata berikut: "
+      - This is a LISTENING test where a word will be spoken aloud
+      - Child must identify the spoken word from 4 visual options
+      - Focus on Indonesian words with confusing letter pairs that dyslexic children struggle with
+      - Use UPPERCASE for all options to aid visual recognition
 
+      Difficulty levels:
+      - EASY: Short words (4-5 letters) with ONE confusing letter pair (e.g., bola vs dola, pagi vs qagi)
+      - MEDIUM: Medium words (5-6 letters) with confusing letters in multiple positions (e.g., bunga vs dunga, panas vs qanas)
+      - HARD: Longer words (6+ letters) with multiple confusing letter patterns (e.g., beruang vs deruang, membaca vs memdaca)
+
+      Common confusing pairs: b-d, p-q, m-w, n-u, m-n
+
+      Parameters:
       Difficulty: {{difficulty}}
       Target letter pair: {{targetLetterPair}}
-      Target letter: {{targetLetter}}
-      Correct word: {{correctWord}}
-      Distractors (must use exactly these): {{distractors}}
-      Hint (optional): {{hint}}
 
       Task:
-      Create a questionText in Indonesian, and an options array of 4 words containing the correct word and the distractors, shuffled.
+      1. Choose ONE real Indonesian word that contains the target letter pair
+      2. Create 3 distractor words that LOOK visually similar (swap letters from confusing pairs)
+      3. Distractors should be visually plausible but may not be real words
+      4. Return 4 options shuffled randomly (1 correct + 3 distractors)
+      5. Also return the correct answer
 
-      IMPORTANT: Return ONLY valid JSON with NO additional text, NO markdown formatting, NO code blocks.
+      IMPORTANT: Return ONLY valid JSON, NO markdown, NO code blocks.
       JSON format:
-      {"questionText":"...","options":["...","...","...","..."]}
+      {"correctAnswer":"KATA","options":["KATA","DATA","KAFA","KAFA"]}

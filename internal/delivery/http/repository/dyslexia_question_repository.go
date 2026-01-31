@@ -24,6 +24,14 @@ type (
 		FindUserAnswersBySessionID(db *gorm.DB, sessionID string) ([]entity.UserAnswer, error)
 		FindUserAnswersByUserID(db *gorm.DB, userID string) ([]entity.UserAnswer, error)
 		FindExistingAnswer(db *gorm.DB, userID, sessionID, questionID string) (*entity.UserAnswer, error)
+
+		// Session analysis cache operations
+		CreateOrUpdateAnalysisCache(db *gorm.DB, cache *entity.SessionAnalysisCache) error
+		FindAnalysisCacheBySessionID(db *gorm.DB, sessionID string) (*entity.SessionAnalysisCache, error)
+
+		// Chat message operations
+		CreateChatMessage(db *gorm.DB, message *entity.ChatMessage) error
+		FindChatMessagesBySessionID(db *gorm.DB, sessionID string, limit int) ([]entity.ChatMessage, error)
 	}
 
 	dyslexiaQuestionRepository struct {
@@ -151,4 +159,46 @@ func (r *dyslexiaQuestionRepository) FindExistingAnswer(db *gorm.DB, userID, ses
 		return nil, err
 	}
 	return &answer, nil
+}
+
+// Session analysis cache operations
+func (r *dyslexiaQuestionRepository) CreateOrUpdateAnalysisCache(db *gorm.DB, cache *entity.SessionAnalysisCache) error {
+	if db == nil {
+		db = r.db
+	}
+	// Upsert: update if exists, create if not
+	return db.Where("session_id = ?", cache.SessionID).Assign(cache).FirstOrCreate(cache).Error
+}
+
+func (r *dyslexiaQuestionRepository) FindAnalysisCacheBySessionID(db *gorm.DB, sessionID string) (*entity.SessionAnalysisCache, error) {
+	if db == nil {
+		db = r.db
+	}
+	var cache entity.SessionAnalysisCache
+	err := db.Where("session_id = ?", sessionID).First(&cache).Error
+	if err != nil {
+		return nil, err
+	}
+	return &cache, nil
+}
+
+// Chat message operations
+func (r *dyslexiaQuestionRepository) CreateChatMessage(db *gorm.DB, message *entity.ChatMessage) error {
+	if db == nil {
+		db = r.db
+	}
+	return db.Create(message).Error
+}
+
+func (r *dyslexiaQuestionRepository) FindChatMessagesBySessionID(db *gorm.DB, sessionID string, limit int) ([]entity.ChatMessage, error) {
+	if db == nil {
+		db = r.db
+	}
+	var messages []entity.ChatMessage
+	query := db.Where("session_id = ?", sessionID).Order("created_at ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	err := query.Find(&messages).Error
+	return messages, err
 }

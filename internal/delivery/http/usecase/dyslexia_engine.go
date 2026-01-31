@@ -14,15 +14,18 @@ import (
 	"github.com/evandrarf/dinacom-be/internal/delivery/http/repository"
 	internalEntity "github.com/evandrarf/dinacom-be/internal/entity"
 	"github.com/evandrarf/dinacom-be/internal/pkg/llm"
-	"github.com/evandrarf/dinacom-be/internal/pkg/mapper"
+	openai "github.com/sashabaranov/go-openai"
+	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
 type DyslexiaQuestionUsecase interface {
-	Generate(ctx context.Context, difficulty entity.Difficulty, count int, includeAnswer bool) ([]entity.GeneratedQuestion, error)
+	Generate(ctx context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, pattern string, useAI bool) ([]entity.GeneratedQuestion, error)
 	SubmitAnswer(ctx context.Context, req entity.SubmitAnswerRequest) (*entity.SubmitAnswerResponse, error)
 	GetSessionAnswers(ctx context.Context, sessionID string) ([]entity.UserAnswerLog, error)
 	GenerateSessionReport(ctx context.Context, sessionID string) (*entity.SessionReport, error)
+	ChatWithBot(ctx context.Context, sessionID string, userMessage string) (*entity.ChatResponse, error)
+	GetChatHistory(ctx context.Context, sessionID string) ([]entity.ChatHistoryItem, error)
 }
 
 type DyslexiaQuestionConfig struct {
@@ -30,6 +33,7 @@ type DyslexiaQuestionConfig struct {
 	Gemini         *llm.GeminiClient
 	PromptTemplate string
 	Repository     repository.DyslexiaQuestionRepository
+	Config         *viper.Viper
 }
 
 type dyslexiaQuestionUsecase struct {
@@ -47,7 +51,10 @@ func NewDyslexiaQuestionUsecase(cfg DyslexiaQuestionConfig) DyslexiaQuestionUsec
 	}
 }
 
-func (u *dyslexiaQuestionUsecase) Generate(ctx context.Context, difficulty entity.Difficulty, count int, includeAnswer bool) ([]entity.GeneratedQuestion, error) {
+func (u *dyslexiaQuestionUsecase) Generate(ctx context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, pattern string, useAI bool) ([]entity.GeneratedQuestion, error) {
+	startTime := time.Now()
+	fmt.Printf("[PERF] Generate started for difficulty=%s count=%d pattern=%s use_ai=%v\n", difficulty, count, pattern, useAI)
+
 	if difficulty == "" {
 		difficulty = entity.DifficultyEasy
 	}
@@ -58,62 +65,96 @@ func (u *dyslexiaQuestionUsecase) Generate(ctx context.Context, difficulty entit
 		count = 10
 	}
 
-	// Load templates from database
-	dbTemplates, err := u.cfg.Repository.FindTemplatesByDifficulty(u.cfg.DB, string(difficulty))
-	if err != nil {
-		return nil, fmt.Errorf("failed to load templates from database: %w", err)
-	}
+	// Define common letter pairs for dyslexia practice
+	letterPairs := []string{"b-d", "p-q", "m-w", "n-u", "m-n"}
 
-	if len(dbTemplates) < count {
-		return nil, fmt.Errorf("not enough unique questions left for difficulty %s", difficulty)
-	}
-
-	// Convert DB templates to QuestionTemplate
-	available := make([]entity.QuestionTemplate, 0, len(dbTemplates))
-	for _, dbTpl := range dbTemplates {
-		tpl, err := mapper.ConvertToQuestionTemplate(&dbTpl)
-		if err != nil {
-			fmt.Printf("Warning: failed to convert template %s: %v\n", dbTpl.TemplateID, err)
-			continue
+	// If pattern is specified, validate and use only that pattern
+	if pattern != "" {
+		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		validPattern := false
+		for _, lp := range letterPairs {
+			if lp == pattern {
+				validPattern = true
+				break
+			}
 		}
-		available = append(available, tpl)
+		if !validPattern {
+			return nil, fmt.Errorf("invalid pattern: %s (allowed: b-d, p-q, m-w, n-u, m-n)", pattern)
+		}
+		letterPairs = []string{pattern} // Use only the specified pattern
 	}
 
-	result := make([]entity.GeneratedQuestion, 0, count)
+	// If use_ai=false, retrieve from DB cache
+	if !useAI {
+		fmt.Printf("[PERF] Using DB cache (use_ai=false)\n")
+		return u.generateFromDBCache(ctx, difficulty, count, includeAnswer, pattern)
+	}
+
+	// Check if AI prompt is disabled via env
+	disableAI := u.cfg.Config.GetBool("llm.gemini.disable_ai_prompt")
+
+	// Use goroutines for parallel generation to speed up
+	type result struct {
+		question entity.GeneratedQuestion
+		index    int
+		err      error
+	}
+
+	resultChan := make(chan result, count)
+
+	// Generate all questions in parallel
 	for i := 0; i < count; i++ {
-		idx := u.rnd.Intn(len(available))
-		tpl := available[idx]
-		available = append(available[:idx], available[idx+1:]...)
+		go func(index int) {
+			iterStart := time.Now()
+			// Pick random letter pair for each question
+			letterPair := letterPairs[u.rnd.Intn(len(letterPairs))]
 
-		// Always generate with answer (for DB storage)
-		q, err := u.generateFromTemplate(ctx, tpl, true)
-		if err != nil {
-			fmt.Printf("DyslexiaQuestionUsecase.Generate: gemini generate error: %v, trying DB fallback\n", err)
-			// Try fallback from DB first
-			dbFallback, dbErr := u.fallbackFromDB(ctx, tpl, true)
-			if dbErr == nil {
-				q = dbFallback
+			var q entity.GeneratedQuestion
+			var err error
+
+			if disableAI {
+				// Skip AI, use simple fallback
+				q = createFallbackQuestion(difficulty, letterPair, true)
 			} else {
-				// Last resort: hardcoded fallback
-				fmt.Printf("DB fallback also failed: %v, using hardcoded fallback\n", dbErr)
-				q = fallbackQuestion(tpl, true)
-			}
-		} else {
-			// Save successfully generated question to DB for future use
-			if saveErr := u.saveGeneratedToDB(ctx, q, tpl.ID); saveErr != nil {
-				fmt.Printf("Warning: failed to save generated question to DB: %v\n", saveErr)
-			}
-		}
+				// Generate from AI
+				aiStart := time.Now()
+				q, err = u.generateFromAI(ctx, difficulty, letterPair, true)
+				fmt.Printf("[PERF] AI call %d took: %v\n", index+1, time.Since(aiStart))
 
-		// Remove answer from response if not requested by user
-		if !includeAnswer {
-			q.Answer = ""
-		}
+				if err != nil {
+					fmt.Printf("Question %d: AI generate error: %v, using fallback\n", index+1, err)
+					q = createFallbackQuestion(difficulty, letterPair, true)
+				} else {
+					// Save asynchronously (non-blocking)
+					go func(question entity.GeneratedQuestion, pair string) {
+						if saveErr := u.saveGeneratedToDB(ctx, question, pair); saveErr != nil {
+							fmt.Printf("Warning: failed to save question to DB: %v\n", saveErr)
+						}
+					}(q, letterPair)
+				}
+			}
 
-		result = append(result, q)
+			fmt.Printf("[PERF] Question %d took: %v\n", index+1, time.Since(iterStart))
+			resultChan <- result{question: q, index: index, err: err}
+		}(i)
 	}
 
-	return result, nil
+	// Collect results
+	results := make([]entity.GeneratedQuestion, count)
+	for i := 0; i < count; i++ {
+		r := <-resultChan
+		results[r.index] = r.question
+	}
+
+	// Remove answer from response if not requested by user
+	if !includeAnswer {
+		for i := range results {
+			results[i].Answer = ""
+		}
+	}
+
+	fmt.Printf("[PERF] Total Generate time: %v (parallel execution)\n", time.Since(startTime))
+	return results, nil
 }
 
 func (u *dyslexiaQuestionUsecase) fallbackFromDB(_ context.Context, tpl entity.QuestionTemplate, includeAnswer bool) (entity.GeneratedQuestion, error) {
@@ -134,11 +175,10 @@ func (u *dyslexiaQuestionUsecase) fallbackFromDB(_ context.Context, tpl entity.Q
 	q := entity.GeneratedQuestion{
 		ID:               dbQ.QuestionID,
 		Difficulty:       entity.Difficulty(dbQ.Difficulty),
-		QuestionText:     dbQ.QuestionText,
+		QuestionText:     "Dengarkan kata berikut: ",
 		TargetLetterPair: dbQ.TargetLetterPair,
 		TargetLetter:     dbQ.TargetLetter,
 		Options:          options,
-		Hint:             dbQ.Hint,
 	}
 	if includeAnswer {
 		q.Answer = dbQ.CorrectAnswer
@@ -150,7 +190,7 @@ func (u *dyslexiaQuestionUsecase) fallbackFromDB(_ context.Context, tpl entity.Q
 	return q, nil
 }
 
-func (u *dyslexiaQuestionUsecase) saveGeneratedToDB(_ context.Context, q entity.GeneratedQuestion, templateID string) error {
+func (u *dyslexiaQuestionUsecase) saveGeneratedToDB(_ context.Context, q entity.GeneratedQuestion, letterPair string) error {
 	// Check if already exists
 	existing, _ := u.cfg.Repository.FindGeneratedByQuestionID(u.cfg.DB, q.ID)
 	if existing != nil {
@@ -166,59 +206,252 @@ func (u *dyslexiaQuestionUsecase) saveGeneratedToDB(_ context.Context, q entity.
 
 	dbQuestion := &internalEntity.GeneratedQuestion{
 		QuestionID:       q.ID,
-		TemplateID:       templateID,
+		TemplateID:       letterPair, // Use letterPair as template ID
 		Difficulty:       string(q.Difficulty),
 		QuestionText:     q.QuestionText,
 		TargetLetterPair: q.TargetLetterPair,
 		TargetLetter:     q.TargetLetter,
 		Options:          string(optionsJSON),
 		CorrectAnswer:    q.Answer,
-		Hint:             q.Hint,
-		GeneratedBy:      "gemini",
+		GeneratedBy:      "ai",
 		UsageCount:       1,
 	}
 
 	return u.cfg.Repository.CreateGenerated(u.cfg.DB, dbQuestion)
 }
 
-func fallbackQuestion(tpl entity.QuestionTemplate, includeAnswer bool) entity.GeneratedQuestion {
-	options := make([]string, 0, 1+len(tpl.Distractors))
-	options = append(options, tpl.CorrectWord)
-	options = append(options, tpl.Distractors...)
+// generateFromDBCache retrieves previously generated questions from database
+func (u *dyslexiaQuestionUsecase) generateFromDBCache(_ context.Context, difficulty entity.Difficulty, count int, includeAnswer bool, pattern string) ([]entity.GeneratedQuestion, error) {
+	startTime := time.Now()
+	
+	// Build filters for repository query
+	filters := []string{}
+	if pattern != "" {
+		filters = append(filters, fmt.Sprintf("target_letter_pair = '%s'", pattern))
+	}
+
+	// Get random questions from DB matching criteria
+	dbQuestions, err := u.cfg.Repository.FindRandomGeneratedByDifficulty(u.cfg.DB, string(difficulty), count, filters)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve questions from cache: %w", err)
+	}
+
+	if len(dbQuestions) == 0 {
+		return nil, fmt.Errorf("no cached questions found for difficulty=%s pattern=%s", difficulty, pattern)
+	}
+
+	// Convert DB questions to response format
+	results := make([]entity.GeneratedQuestion, 0, len(dbQuestions))
+	for _, dbQ := range dbQuestions {
+		// Unmarshal options
+		var options []string
+		if err := json.Unmarshal([]byte(dbQ.Options), &options); err != nil {
+			fmt.Printf("Warning: failed to parse options for question %s: %v\n", dbQ.QuestionID, err)
+			continue
+		}
+
+		q := entity.GeneratedQuestion{
+			ID:               dbQ.QuestionID,
+			Difficulty:       entity.Difficulty(dbQ.Difficulty),
+			QuestionText:     dbQ.QuestionText,
+			TargetLetterPair: dbQ.TargetLetterPair,
+			TargetLetter:     dbQ.TargetLetter,
+			Options:          options,
+		}
+		if includeAnswer {
+			q.Answer = dbQ.CorrectAnswer
+		}
+
+		results = append(results, q)
+
+		// Increment usage count asynchronously
+		go func(questionID string) {
+			if err := u.cfg.Repository.IncrementUsageCount(u.cfg.DB, questionID); err != nil {
+				fmt.Printf("Warning: failed to increment usage count for %s: %v\n", questionID, err)
+			}
+		}(dbQ.QuestionID)
+	}
+
+	fmt.Printf("[PERF] DB cache retrieval took: %v (found %d questions)\n", time.Since(startTime), len(results))
+	return results, nil
+}
+
+// Simple fallback when AI is disabled or fails
+func createFallbackQuestion(difficulty entity.Difficulty, letterPair string, includeAnswer bool) entity.GeneratedQuestion {
+	// Hardcoded fallback examples per letter pair (natural lowercase for common nouns)
+	fallbackWords := map[string][]string{
+		"b-d": {"bola", "dola", "bela", "dela"},
+		"p-q": {"pagi", "qagi", "patu", "qatu"},
+		"m-w": {"maju", "waju", "mata", "wata"},
+		"n-u": {"nasi", "uasi", "nama", "uama"},
+		"m-n": {"makan", "nakan", "main", "nain"},
+	}
+
+	words, ok := fallbackWords[letterPair]
+	if !ok {
+		words = []string{"bola", "dola", "bela", "dela"} // Default
+	}
+
+	correctAnswer := words[0]
+	id := generateQuestionID(correctAnswer, difficulty)
 
 	q := entity.GeneratedQuestion{
-		ID:               tpl.ID,
-		Difficulty:       tpl.Difficulty,
-		QuestionText:     fmt.Sprintf("Pilih kata yang benar: mana yang memakai huruf %s?", tpl.TargetLetter),
-		TargetLetterPair: tpl.TargetLetterPair,
-		TargetLetter:     tpl.TargetLetter,
-		Options:          options,
-		Hint:             tpl.Hint,
+		ID:               id,
+		Difficulty:       difficulty,
+		QuestionText:     "Dengarkan kata berikut: ",
+		TargetLetterPair: letterPair,
+		TargetLetter:     strings.Split(letterPair, "-")[0],
+		Options:          words,
 	}
 	if includeAnswer {
-		q.Answer = tpl.CorrectWord
+		q.Answer = correctAnswer
 	}
 	return q
 }
 
 type geminiQuestionJSON struct {
-	QuestionText string   `json:"questionText"`
-	Options      []string `json:"options"`
+	CorrectAnswer string   `json:"correctAnswer"`
+	Options       []string `json:"options"`
 }
 
-func (u *dyslexiaQuestionUsecase) generateFromTemplate(ctx context.Context, tpl entity.QuestionTemplate, includeAnswer bool) (entity.GeneratedQuestion, error) {
+type geminiBatchJSON struct {
+	Questions []geminiQuestionJSON `json:"questions"`
+}
+
+// generateBatchFromAI generates multiple questions in ONE API call
+func (u *dyslexiaQuestionUsecase) generateBatchFromAI(ctx context.Context, difficulty entity.Difficulty, count int, letterPairs []string, includeAnswer bool) ([]entity.GeneratedQuestion, error) {
+	if u.cfg.Gemini == nil {
+		return nil, fmt.Errorf("gemini client not configured")
+	}
+
+	// Build batch prompt asking for N questions at once
+	pairsStr := strings.Join(letterPairs, ", ")
+	prompt := fmt.Sprintf(`Generate %d different listening questions for Indonesian dyslexic children.
+
+Difficulty: %s
+Available letter pairs to use: %s
+
+For each question:
+1. Choose ONE letter pair from the list
+2. Create ONE real Indonesian word containing that pair
+3. Generate EXACTLY 3 UNIQUE distractor words that look visually similar (swap confusing letters)
+4. ALL 4 OPTIONS MUST BE DIFFERENT - NO DUPLICATES ALLOWED
+5. Use NATURAL capitalization (lowercase for common nouns, capitalize proper nouns)
+
+Return JSON array of %d questions. Each question must have:
+- "correctAnswer": the correct word to be spoken (with natural capitalization)
+- "options": array of 4 UNIQUE words shuffled randomly (1 correct + 3 unique distractors)
+
+CRITICAL: Ensure all 4 options in each question are UNIQUE and DIFFERENT!
+
+IMPORTANT: Return ONLY valid JSON, NO markdown, NO code blocks.
+JSON format:
+{"questions":[{"correctAnswer":"bola","options":["bola","dola","bela","pola"]},{"correctAnswer":"kata","options":["kata","data","kaca","kapa"]},...]}`,
+		count, difficulty, pairsStr, count)
+
+	text, err := u.cfg.Gemini.GenerateText(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse JSON response
+	clean := strings.TrimSpace(text)
+	clean = strings.TrimPrefix(clean, "```json")
+	clean = strings.TrimPrefix(clean, "```")
+	clean = strings.TrimSuffix(clean, "```")
+	clean = strings.TrimSpace(clean)
+
+	var parsed geminiBatchJSON
+	if err := json.Unmarshal([]byte(clean), &parsed); err != nil {
+		fmt.Printf("Batch JSON Parse Error - Raw output (%d chars): %s\n", len(clean), clean)
+		return nil, fmt.Errorf("AI output is not valid json: %w", err)
+	}
+
+	if len(parsed.Questions) == 0 {
+		return nil, fmt.Errorf("AI returned no questions")
+	}
+
+	// Convert to GeneratedQuestion format
+	results := make([]entity.GeneratedQuestion, 0, len(parsed.Questions))
+	for _, qData := range parsed.Questions {
+		if len(qData.Options) < 2 {
+			continue // Skip invalid questions
+		}
+
+		// Deduplicate options (in case AI returns duplicates)
+		uniqueOptions := deduplicateOptions(qData.Options, qData.CorrectAnswer)
+		if len(uniqueOptions) < 2 {
+			continue // Skip if not enough unique options
+		}
+
+		// Detect letter pair from correct answer
+		letterPair := detectLetterPair(qData.CorrectAnswer, letterPairs)
+		targetLetter := strings.Split(letterPair, "-")[0]
+
+		id := generateQuestionID(qData.CorrectAnswer, difficulty)
+		q := entity.GeneratedQuestion{
+			ID:               id,
+			Difficulty:       difficulty,
+			QuestionText:     "Dengarkan kata berikut: ",
+			TargetLetterPair: letterPair,
+			TargetLetter:     targetLetter,
+			Options:          uniqueOptions,
+		}
+		if includeAnswer {
+			q.Answer = qData.CorrectAnswer
+		}
+		results = append(results, q)
+	}
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no valid questions generated")
+	}
+
+	return results, nil
+}
+
+// deduplicateOptions removes duplicate options and ensures correct answer is included
+func deduplicateOptions(options []string, correctAnswer string) []string {
+	seen := make(map[string]bool)
+	unique := make([]string, 0, len(options))
+
+	// Ensure correct answer is first
+	if correctAnswer != "" && !seen[correctAnswer] {
+		unique = append(unique, correctAnswer)
+		seen[correctAnswer] = true
+	}
+
+	// Add other unique options
+	for _, opt := range options {
+		if opt != "" && !seen[opt] {
+			unique = append(unique, opt)
+			seen[opt] = true
+		}
+	}
+
+	return unique
+}
+
+// detectLetterPair detects which letter pair is in the word
+func detectLetterPair(word string, letterPairs []string) string {
+	word = strings.ToLower(word)
+	for _, pair := range letterPairs {
+		letters := strings.Split(pair, "-")
+		if strings.Contains(word, letters[0]) || strings.Contains(word, letters[1]) {
+			return pair
+		}
+	}
+	return letterPairs[0] // Default fallback
+}
+
+func (u *dyslexiaQuestionUsecase) generateFromAI(ctx context.Context, difficulty entity.Difficulty, letterPair string, includeAnswer bool) (entity.GeneratedQuestion, error) {
 	if u.cfg.Gemini == nil {
 		return entity.GeneratedQuestion{}, fmt.Errorf("gemini client not configured")
 	}
 
-	distractors := strings.Join(tpl.Distractors, ", ")
 	prompt := u.cfg.PromptTemplate
-	prompt = strings.ReplaceAll(prompt, "{{difficulty}}", string(tpl.Difficulty))
-	prompt = strings.ReplaceAll(prompt, "{{targetLetterPair}}", tpl.TargetLetterPair)
-	prompt = strings.ReplaceAll(prompt, "{{targetLetter}}", tpl.TargetLetter)
-	prompt = strings.ReplaceAll(prompt, "{{correctWord}}", tpl.CorrectWord)
-	prompt = strings.ReplaceAll(prompt, "{{distractors}}", distractors)
-	prompt = strings.ReplaceAll(prompt, "{{hint}}", tpl.Hint)
+	prompt = strings.ReplaceAll(prompt, "{{difficulty}}", string(difficulty))
+	prompt = strings.ReplaceAll(prompt, "{{targetLetterPair}}", letterPair)
 
 	text, err := u.cfg.Gemini.GenerateText(ctx, prompt)
 	if err != nil {
@@ -233,62 +466,77 @@ func (u *dyslexiaQuestionUsecase) generateFromTemplate(ctx context.Context, tpl 
 	clean = strings.TrimSpace(clean)
 
 	// Debug log
-	if len(clean) < 50 {
-		fmt.Printf("WARNING: Gemini response too short (%d chars): %s\n", len(clean), clean)
+	if len(clean) < 30 {
+		fmt.Printf("WARNING: AI response too short (%d chars): %s\n", len(clean), clean)
 	}
 
 	var parsed geminiQuestionJSON
 	if err := json.Unmarshal([]byte(clean), &parsed); err != nil {
 		fmt.Printf("JSON Parse Error - Raw output (%d chars): %s\n", len(clean), clean)
-		return entity.GeneratedQuestion{}, fmt.Errorf("gemini output is not valid json: %w", err)
+		return entity.GeneratedQuestion{}, fmt.Errorf("AI output is not valid json: %w", err)
 	}
-	if parsed.QuestionText == "" || len(parsed.Options) < 2 {
-		return entity.GeneratedQuestion{}, fmt.Errorf("gemini output missing fields")
+	if len(parsed.Options) < 2 || parsed.CorrectAnswer == "" {
+		return entity.GeneratedQuestion{}, fmt.Errorf("AI output missing required fields")
 	}
 
-	id := uniqueQuestionID(tpl.ID, parsed.QuestionText)
+	// Deduplicate options (in case AI returns duplicates)
+	uniqueOptions := deduplicateOptions(parsed.Options, parsed.CorrectAnswer)
+	if len(uniqueOptions) < 2 {
+		return entity.GeneratedQuestion{}, fmt.Errorf("not enough unique options after deduplication")
+	}
+
+	id := generateQuestionID(parsed.CorrectAnswer, difficulty)
 	q := entity.GeneratedQuestion{
 		ID:               id,
-		Difficulty:       tpl.Difficulty,
-		QuestionText:     parsed.QuestionText,
-		TargetLetterPair: tpl.TargetLetterPair,
-		TargetLetter:     tpl.TargetLetter,
-		Options:          parsed.Options,
-		Hint:             tpl.Hint,
+		Difficulty:       difficulty,
+		QuestionText:     "Dengarkan kata berikut: ",
+		TargetLetterPair: letterPair,
+		TargetLetter:     strings.Split(letterPair, "-")[0], // First letter of pair
+		Options:          uniqueOptions,
 	}
 	if includeAnswer {
-		q.Answer = tpl.CorrectWord
+		q.Answer = parsed.CorrectAnswer
 	}
 
 	return q, nil
 }
 
-func uniqueQuestionID(templateID string, questionText string) string {
-	sum := sha256.Sum256([]byte(templateID + "|" + questionText))
-	return templateID + "-" + hex.EncodeToString(sum[:8])
+func generateQuestionID(word string, difficulty entity.Difficulty) string {
+	sum := sha256.Sum256([]byte(word + "|" + string(difficulty)))
+	return "q-" + hex.EncodeToString(sum[:8])
 }
 
-const defaultPromptTemplate = `You are generating a multiple-choice reading question for Indonesian dyslexic children (TK-SD).
+const defaultPromptTemplate = `You are generating audio-based listening questions for Indonesian dyslexic children (TK-SD).
 
 Design principles:
-- Keep instructions very short, friendly, and clear
-- High letter contrast: use UPPERCASE words in options
-- Focus on confusion pairs (e.g., b-d, p-q)
-- Do not add extra distractors beyond the given ones
+- The question text is ALWAYS static: "Dengarkan kata berikut: "
+- This is a LISTENING test where a word will be spoken aloud
+- Child must identify the spoken word from 4 visual options
+- Focus on Indonesian words with confusing letter pairs that dyslexic children struggle with
+- Use UPPERCASE for all options to aid visual recognition
 
+Difficulty levels:
+- EASY: Short words (4-5 letters) with ONE confusing letter pair (e.g., bola vs dola, pagi vs qagi)
+- MEDIUM: Medium words (5-6 letters) with confusing letters in multiple positions (e.g., bunga vs dunga, panas vs qanas)
+- HARD: Longer words (6+ letters) with multiple confusing letter patterns (e.g., beruang vs deruang, membaca vs memdaca)
+
+Common confusing pairs: b-d, p-q, m-w, n-u, m-n
+
+Parameters:
 Difficulty: {{difficulty}}
 Target letter pair: {{targetLetterPair}}
-Target letter: {{targetLetter}}
-Correct word: {{correctWord}}
-Distractors (must use exactly these): {{distractors}}
-Hint (optional): {{hint}}
 
 Task:
-Create a questionText in Indonesian, and an options array of 4 words containing the correct word and the distractors, shuffled.
+1. Choose ONE real Indonesian word that contains the target letter pair
+2. Create 3 distractor words that LOOK visually similar (swap letters from confusing pairs)
+3. Distractors should be visually plausible but may not be real words
+4. Return 4 options shuffled randomly (1 correct + 3 distractors)
+5. Also return the correct answer
 
-IMPORTANT: Return ONLY valid JSON with NO additional text, NO markdown formatting, NO code blocks.
+IMPORTANT: Return ONLY valid JSON, NO markdown, NO code blocks.
 JSON format:
-{"questionText":"...","options":["...","...","...","..."]}`
+{"correctAnswer":"KATA","options":["KATA","DATA","KAFA","KAFA"]}
+`
 
 func (u *dyslexiaQuestionUsecase) SubmitAnswer(ctx context.Context, req entity.SubmitAnswerRequest) (*entity.SubmitAnswerResponse, error) {
 	// Check if answer already exists for this user, session, and question
@@ -455,7 +703,40 @@ func (u *dyslexiaQuestionUsecase) GenerateSessionReport(ctx context.Context, ses
 		Recommendations: recommendations,
 	}
 
+	// Save analysis to cache for chatbot
+	if err := u.saveAnalysisCache(ctx, report); err != nil {
+		fmt.Printf("Warning: failed to save analysis cache: %v\n", err)
+	}
+
 	return report, nil
+}
+
+func (u *dyslexiaQuestionUsecase) saveAnalysisCache(_ context.Context, report *entity.SessionReport) error {
+	// Convert error patterns and difficulty stats to JSON
+	errorPatternsJSON, err := json.Marshal(report.ErrorPatterns)
+	if err != nil {
+		return err
+	}
+
+	difficultyStatsJSON, err := json.Marshal(report.DifficultyStats)
+	if err != nil {
+		return err
+	}
+
+	cache := &internalEntity.SessionAnalysisCache{
+		SessionID:       report.SessionID,
+		TotalQuestions:  report.TotalQuestions,
+		CorrectAnswers:  report.CorrectAnswers,
+		WrongAnswers:    report.WrongAnswers,
+		AccuracyRate:    report.AccuracyRate,
+		OverallValue:    report.OverallValue,
+		AIAnalysis:      report.AIAnalysys,
+		Recommendations: report.Recommendations,
+		ErrorPatterns:   string(errorPatternsJSON),
+		DifficultyStats: string(difficultyStatsJSON),
+	}
+
+	return u.cfg.Repository.CreateOrUpdateAnalysisCache(u.cfg.DB, cache)
 }
 
 func (u *dyslexiaQuestionUsecase) generateAIAnalysis(ctx context.Context, answers []internalEntity.UserAnswer, errorPatterns []entity.ErrorPattern, accuracyRate string) (string, string, string) {
@@ -544,4 +825,138 @@ func countCorrect(answers []internalEntity.UserAnswer) int {
 		}
 	}
 	return count
+}
+
+// ChatWithBot handles chatbot conversation with session context
+func (u *dyslexiaQuestionUsecase) ChatWithBot(ctx context.Context, sessionID string, userMessage string) (*entity.ChatResponse, error) {
+	// 1. Check for cached analysis, generate if missing
+	cachedAnalysis, err := u.cfg.Repository.FindAnalysisCacheBySessionID(u.cfg.DB, sessionID)
+	if err != nil || cachedAnalysis == nil {
+		// Generate report to create analysis cache
+		_, err := u.GenerateSessionReport(ctx, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate analysis for chatbot: %w", err)
+		}
+		// Fetch again after generation
+		cachedAnalysis, err = u.cfg.Repository.FindAnalysisCacheBySessionID(u.cfg.DB, sessionID)
+		if err != nil || cachedAnalysis == nil {
+			return nil, fmt.Errorf("failed to fetch analysis cache: %w", err)
+		}
+	}
+
+	// 2. Build system context from cached analysis
+	systemContext := fmt.Sprintf(`Kamu adalah asisten pembelajaran yang membantu anak-anak dengan disleksia dalam bahasa Indonesia.
+
+Konteks Sesi Latihan:
+- Total Soal: %d
+- Jawaban Benar: %d
+- Jawaban Salah: %d
+- Tingkat Akurasi: %s
+- Nilai Keseluruhan: %s
+
+Analisis AI:
+%s
+
+Rekomendasi:
+%s
+
+Tugas kamu:
+1. Berikan dukungan positif dan motivasi
+2. Jawab pertanyaan anak dengan bahasa yang sederhana dan ramah
+3. Berikan penjelasan tambahan tentang kesulitan yang mereka hadapi
+4. Jangan memberikan jawaban langsung untuk soal, tapi berikan petunjuk
+5. Gunakan emoji secara wajar untuk membuat percakapan lebih menyenangkan`,
+		cachedAnalysis.TotalQuestions,
+		cachedAnalysis.CorrectAnswers,
+		cachedAnalysis.WrongAnswers,
+		cachedAnalysis.AccuracyRate,
+		cachedAnalysis.OverallValue,
+		cachedAnalysis.AIAnalysis,
+		cachedAnalysis.Recommendations,
+	)
+
+	// 3. Retrieve last 10 chat messages for conversation continuity
+	chatHistory, err := u.cfg.Repository.FindChatMessagesBySessionID(u.cfg.DB, sessionID, 10)
+	if err != nil {
+		chatHistory = []internalEntity.ChatMessage{} // Continue with empty history
+	}
+
+	// 4. Build OpenAI messages array
+	messages := []openai.ChatCompletionMessage{
+		{
+			Role:    openai.ChatMessageRoleSystem,
+			Content: systemContext,
+		},
+	}
+
+	// Add chat history
+	for _, msg := range chatHistory {
+		var role string
+		if msg.Role == "user" {
+			role = openai.ChatMessageRoleUser
+		} else {
+			role = openai.ChatMessageRoleAssistant
+		}
+		messages = append(messages, openai.ChatCompletionMessage{
+			Role:    role,
+			Content: msg.Message,
+		})
+	}
+
+	// Add current user message
+	messages = append(messages, openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleUser,
+		Content: userMessage,
+	})
+
+	// 5. Call LLM with full context (plain text response)
+	botResponse, err := u.cfg.Gemini.GenerateChatResponse(ctx, messages)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate chatbot response: %w", err)
+	}
+
+	// 6. Save both user message and bot response to database
+	// Save user message
+	userMsg := &internalEntity.ChatMessage{
+		SessionID: sessionID,
+		Role:      "user",
+		Message:   userMessage,
+	}
+	if err := u.cfg.Repository.CreateChatMessage(u.cfg.DB, userMsg); err != nil {
+		// Ignore save error, continue with response
+	}
+
+	// Save bot response
+	botMsg := &internalEntity.ChatMessage{
+		SessionID: sessionID,
+		Role:      "assistant",
+		Message:   botResponse,
+	}
+	if err := u.cfg.Repository.CreateChatMessage(u.cfg.DB, botMsg); err != nil {
+		// Ignore save error, continue with response
+	}
+
+	return &entity.ChatResponse{
+		Response:  botResponse,
+		SessionID: sessionID,
+	}, nil
+}
+
+// GetChatHistory retrieves chat history for a session
+func (u *dyslexiaQuestionUsecase) GetChatHistory(ctx context.Context, sessionID string) ([]entity.ChatHistoryItem, error) {
+	messages, err := u.cfg.Repository.FindChatMessagesBySessionID(u.cfg.DB, sessionID, 50)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch chat history: %w", err)
+	}
+
+	history := make([]entity.ChatHistoryItem, 0, len(messages))
+	for _, msg := range messages {
+		history = append(history, entity.ChatHistoryItem{
+			Role:      msg.Role,
+			Message:   msg.Message,
+			CreatedAt: msg.CreatedAt.Format(time.RFC3339),
+		})
+	}
+
+	return history, nil
 }

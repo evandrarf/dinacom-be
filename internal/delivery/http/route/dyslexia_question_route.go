@@ -18,4 +18,10 @@ func SetupDyslexiaQuestionRoute(api *fiber.App, handler handler.DyslexiaQuestion
 	{
 		reportRouter.Get("/sessions/:session_id", handler.GetSessionReport)
 	}
+
+	chatbotRouter := api.Group("/chatbot")
+	{
+		chatbotRouter.Post("/sessions/:session_id", handler.ChatWithBot)
+		chatbotRouter.Get("/sessions/:session_id/history", handler.GetChatHistory)
+	}
 }

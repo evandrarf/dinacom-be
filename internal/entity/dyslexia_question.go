@@ -15,7 +15,6 @@ type QuestionBankTemplate struct {
 	TargetLetter     string         `gorm:"size:5;not null" json:"target_letter"`            // B, D, etc
 	CorrectWord      string         `gorm:"size:100;not null" json:"correct_word"`           // BATU
 	Distractors      string         `gorm:"type:text;not null" json:"distractors"`           // JSON array: ["DATU","MATU","SATU"]
-	Hint             string         `gorm:"type:text" json:"hint"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
@@ -34,9 +33,8 @@ type GeneratedQuestion struct {
 	QuestionText     string         `gorm:"type:text;not null" json:"question_text"` // "Pilih kata yang benar..."
 	TargetLetterPair string         `gorm:"size:10" json:"target_letter_pair"`
 	TargetLetter     string         `gorm:"size:5" json:"target_letter"`
-	Options          string         `gorm:"type:text;not null" json:"options"`       // JSON array: ["BATU","DATU","MATU","SATU"]
-	CorrectAnswer    string         `gorm:"size:100;not null" json:"correct_answer"` // BATU
-	Hint             string         `gorm:"type:text" json:"hint"`
+	Options          string         `gorm:"type:text;not null" json:"options"`          // JSON array: ["BATU","DATU","MATU","SATU"]
+	CorrectAnswer    string         `gorm:"size:100;not null" json:"correct_answer"`    // BATU
 	GeneratedBy      string         `gorm:"size:20;default:gemini" json:"generated_by"` // gemini, fallback
 	UsageCount       int            `gorm:"default:0" json:"usage_count"`               // berapa kali dipakai
 	CreatedAt        time.Time      `json:"created_at"`
@@ -67,4 +65,41 @@ type UserAnswer struct {
 
 func (UserAnswer) TableName() string {
 	return "user_answers"
+}
+
+// SessionAnalysisCache - Cache hasil AI analysis per session
+type SessionAnalysisCache struct {
+	ID              uint           `gorm:"primarykey" json:"id"`
+	SessionID       string         `gorm:"uniqueIndex;size:100;not null" json:"session_id"` // session test
+	TotalQuestions  int            `gorm:"not null" json:"total_questions"`
+	CorrectAnswers  int            `gorm:"not null" json:"correct_answers"`
+	WrongAnswers    int            `gorm:"not null" json:"wrong_answers"`
+	AccuracyRate    string         `gorm:"size:20" json:"accuracy_rate"`
+	OverallValue    string         `gorm:"size:50" json:"overall_value"`
+	AIAnalysis      string         `gorm:"type:text" json:"ai_analysis"`
+	Recommendations string         `gorm:"type:text" json:"recommendations"`
+	ErrorPatterns   string         `gorm:"type:text" json:"error_patterns"`   // JSON array of error patterns
+	DifficultyStats string         `gorm:"type:text" json:"difficulty_stats"` // JSON object of difficulty stats
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+}
+
+func (SessionAnalysisCache) TableName() string {
+	return "session_analysis_cache"
+}
+
+// ChatMessage - History chat per session
+type ChatMessage struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	SessionID string         `gorm:"size:100;not null;index" json:"session_id"` // session test
+	Role      string         `gorm:"size:20;not null" json:"role"`              // user, assistant, system
+	Message   string         `gorm:"type:text;not null" json:"message"`
+	CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+}
+
+func (ChatMessage) TableName() string {
+	return "chat_messages"
 }

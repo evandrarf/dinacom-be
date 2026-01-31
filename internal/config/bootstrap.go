@@ -47,6 +47,7 @@ func Bootstrap(config *BootstrapConfig) {
 		Gemini:         gemini,
 		PromptTemplate: promptTemplate,
 		Repository:     dyslexiaQuestionRepo,
+		Config:         config.Config,
 	})
 	dyslexiaQuestionHandler := handler.NewDyslexiaQuestionHandler(config.Validator, config.Log, dyslexiaQuestionUsecase)
 

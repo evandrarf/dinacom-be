@@ -24,7 +24,6 @@ type QuestionTemplate struct {
 	TargetLetter     string     `json:"targetLetter"`
 	CorrectWord      string     `json:"correctWord"`
 	Distractors      []string   `json:"distractors"`
-	Hint             string     `json:"hint"`
 }
 
 type GeneratedQuestion struct {
@@ -34,7 +33,6 @@ type GeneratedQuestion struct {
 	TargetLetterPair string     `json:"targetLetterPair"`
 	TargetLetter     string     `json:"targetLetter"`
 	Options          []string   `json:"options"`
-	Hint             string     `json:"hint,omitempty"`
 	Answer           string     `json:"answer,omitempty"`
 }
 
@@ -88,4 +86,22 @@ type SessionReport struct {
 	DifficultyStats map[string]int `json:"difficulty_stats"`
 	AIAnalysys      string         `json:"ai_analysis"`
 	Recommendations string         `json:"recommendations"`
+}
+
+// Chat request
+type ChatRequest struct {
+	Message string `json:"message" validate:"required"`
+}
+
+// Chat response
+type ChatResponse struct {
+	Response  string `json:"response"`
+	SessionID string `json:"session_id"`
+}
+
+// Chat history item
+type ChatHistoryItem struct {
+	Role      string `json:"role"`
+	Message   string `json:"message"`
+	CreatedAt string `json:"created_at"`
 }
